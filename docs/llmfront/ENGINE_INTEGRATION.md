@@ -89,7 +89,7 @@ Loop (`BrainRuntime.step`, every `--poll` ms): fetch turns from `nextTurn` → `
 
 Run (dev server must include this change; `npm run dev` restarts it):
 
-1. `npm run brain:create -- --map World --brains 2` → creates the private game (admin key from `ADMIN_BOT_API_KEY`, default the dev key), prints the join link and the `brain:run` command, waits for a player in the lobby, then arms the start timer.
+1. `npm run brain:create -- --map World --brains 2` (also `--nations <ordinary AI count>` and `--names "France,Germany"`; `--list-nations` prints a map's names; with a count the engine always keeps the named LLM nations in the game) → creates the private game (admin key from `ADMIN_BOT_API_KEY`, default the dev key), prints the join link and the `brain:run` command, waits for a player in the lobby, then arms the start timer.
 2. `npm run brain:run -- --game <id> --server http://localhost:300X` (add `--mock` to run without LM Studio).
 
 Tests: `tests/server/BrainRuntime.test.ts` (scheduler, live in-process game end-to-end with the mock provider, LLM offline, stale discard, rejection feedback, observation budget + fog), `tests/server/BrainIntent.test.ts` (mappings).

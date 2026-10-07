@@ -19,6 +19,8 @@ import { PseudoRandom } from "@openfront/engine-lib/PseudoRandom";
  * Creates the nations array for a game.
  * If config.nations is a number (custom count), uses that exact count,
  * generating additional nations with random names if needed.
+ * A numeric count always includes the nations named in config.brainNations
+ * (when the map has them), so an LLM-driven nation is never left out.
  * If config.nations is "disabled", returns no nations.
  * If config.nations is "default":
  *   - Public HumansVsNations: matches nation count to human player count
@@ -65,6 +67,21 @@ export function createNationsForGame(
   }
   // If nations count is explicitly set, use that exact count
   if (typeof configNations === "number") {
+    // Nations a Brain Host drives are always among the ones that spawn; the
+    // rest of the count is drawn as usual.
+    const brain = new Set(gameStart.config.brainNations ?? []);
+    const forced = manifestNations.filter((n) => brain.has(n.name));
+    if (forced.length > 0)
+      return [
+        ...forced.map(toNation),
+        ...createRandomNations(
+          Math.max(0, configNations - forced.length),
+          manifestNations.filter((n) => !brain.has(n.name)),
+          additionalNations,
+          toNation,
+          random,
+        ),
+      ];
     return createRandomNations(
       configNations,
       manifestNations,

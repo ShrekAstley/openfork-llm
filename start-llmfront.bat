@@ -18,9 +18,19 @@ if errorlevel 1 (
 )
 
 if not defined BRAIN_MODEL (
-  for /f "usebackq delims=" %%m in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0find-lmstudio-model.ps1"`) do set "BRAIN_MODEL=%%m"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0find-lmstudio-model.ps1" -Out "%TEMP%\llmfront-model.txt"
+  if exist "%TEMP%\llmfront-model.txt" set /p BRAIN_MODEL=<"%TEMP%\llmfront-model.txt"
 )
 if defined BRAIN_MODEL (echo Using LM Studio model: %BRAIN_MODEL%) else (echo Could not tell which model is loaded; using LM Studio's default.)
+
+echo.
+echo Game setup (press Enter to accept the default in brackets)
+set "BRAIN_COUNT=" & set "BRAIN_NATIONS=" & set "BRAIN_NAMES="
+set /p "BRAIN_NATIONS=Ordinary AI nations (not LLM) [all the rest of the map]: "
+set /p "BRAIN_COUNT=LLM-controlled nations [2]: "
+set /p "BRAIN_NAMES=Names of the LLM nations, comma separated, from the map's nations [first ones]: "
+if "%BRAIN_COUNT%"=="" set "BRAIN_COUNT=2"
+echo.
 
 echo [3/5] Starting the game server in a new window...
 start "OpenFront server" cmd /k "cd /d %~dp0 && npm run dev"
@@ -35,7 +45,7 @@ if errorlevel 1 (
 
 echo [4/5] Creating the game...
 if exist "%LOG%" del "%LOG%"
-start "Create game" /min cmd /c "cd /d %~dp0 && npm run brain:create -- --map World --brains 2 > "%LOG%" 2>&1"
+start "Create game" /min cmd /c "cd /d %~dp0 && npm run brain:create -- --map World > "%LOG%" 2>&1"
 :waitgame
 timeout /t 2 /nobreak >nul
 findstr /c:"join:" "%LOG%" >nul 2>&1

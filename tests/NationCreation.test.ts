@@ -338,3 +338,50 @@ describe("createNationsForGame: additionalNations pool", () => {
     expect(new Set(names).size).toBe(8);
   });
 });
+
+describe("createNationsForGame with brain nations", () => {
+  const withBrains = (count: number, brains: string[]) => {
+    const g = makeGameStart(count);
+    g.config.brainNations = brains;
+    return g;
+  };
+  const make = (count: number, brains: string[], seed = 1) =>
+    createNationsForGame(
+      withBrains(count, brains),
+      makeManifestNations(20),
+      makeAdditionalNations([]),
+      1,
+      new PseudoRandom(seed),
+    );
+
+  test("named brain nations are always in a numeric count, whatever the seed", () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const names = nationNames(make(5, ["Manifest17", "Manifest3"], seed));
+      expect(names).toHaveLength(5);
+      expect(names).toContain("Manifest17");
+      expect(names).toContain("Manifest3");
+      expect(new Set(names).size).toBe(5);
+    }
+  });
+
+  test("the count is a floor of the brain nations and never duplicates them", () => {
+    const names = nationNames(make(1, ["Manifest1", "Manifest2", "Manifest3"]));
+    expect(names.sort()).toEqual(["Manifest1", "Manifest2", "Manifest3"]);
+  });
+
+  test("a count above the manifest still fills with extra nations", () => {
+    const names = nationNames(make(25, ["Manifest19"]));
+    expect(names).toHaveLength(25);
+    expect(names.filter((n) => n === "Manifest19")).toHaveLength(1);
+  });
+
+  test("unknown brain names change nothing", () => {
+    expect(make(4, ["Nowhere"])).toHaveLength(4);
+  });
+
+  test("deterministic for the same seed", () => {
+    expect(nationNames(make(6, ["Manifest9"], 7))).toEqual(
+      nationNames(make(6, ["Manifest9"], 7)),
+    );
+  });
+});
