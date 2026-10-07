@@ -28,9 +28,12 @@ const { values: a } = parseArgs({
 if (!a.game) throw new Error("--game <id> is required");
 
 const config = loadBrainConfig(a.config);
+config.decisionLog ||= "brain.decisions.jsonl";
 const runtime = new BrainRuntime({
   config,
-  provider: a.mock ? new MockProvider() : new LMStudioProvider(config),
+  provider: a.mock
+    ? new MockProvider()
+    : new LMStudioProvider({ ...config, backend: config.backend }),
   server: {
     serverUrl: a.server!,
     adminKey:

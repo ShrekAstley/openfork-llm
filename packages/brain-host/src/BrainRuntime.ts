@@ -16,6 +16,7 @@ import {
   type BrainState,
   ResumeMismatchError,
 } from "./BrainState";
+import { DecisionLog } from "./DecisionLog";
 import { DiplomacyManager } from "./diplomacy/DiplomacyManager";
 import { EmpireBrain } from "./EmpireBrain";
 import {
@@ -23,6 +24,7 @@ import {
   fetchTurns,
   submitEngineIntent,
 } from "./EngineBridge";
+import { LLMCache } from "./LLMCache";
 import { LLMManager } from "./LLMManager";
 import type { LLMProvider } from "./types";
 
@@ -42,14 +44,20 @@ export class BrainRuntime {
   dm = new DiplomacyManager();
   brains: EmpireBrain[] = [];
   readonly llm: LLMManager;
+  private decisions: DecisionLog;
   private nextTurn = 0;
   private inflight = new Set<Promise<void>>();
   private log: (line: string) => void;
 
   constructor(private o: RuntimeOptions) {
     this.log = o.log ?? ((l) => console.log(l));
+    this.decisions = new DecisionLog(o.config.decisionLog);
     this.llm = new LLMManager(o.provider, {
       maxConcurrent: o.config.maxConcurrentRequests,
+      seed: o.config.seed,
+      residency: o.config.residency,
+      unload: o.provider.unload?.bind(o.provider),
+      cache: new LLMCache(o.config.cache, o.config.cacheFile),
       isStale: (m) => {
         const b = this.brains.find((x) => x.o.name === m.empireId);
         const now = this.runner?.game.ticks() ?? 0;
@@ -108,16 +116,21 @@ export class BrainRuntime {
     const names = start.config.brainNations ?? [];
     for (const name of names.filter((n) => isEmpireEnabled(c, n))) {
       const e = c.empires[name];
+      const model = modelFor(c, name);
+      const profile = c.models[model];
       this.brains.push(
         new EmpireBrain({
           name,
           personality: e?.personality ?? "",
+          traits: e?.traits,
+          backoffMax: c.quietBackoffMax,
           directives: e?.directives ?? [],
           intervalTicks: c.decisionIntervalSeconds * TICKS_PER_SECOND,
           maxAgeTicks: c.maxDecisionAgeSeconds * TICKS_PER_SECOND,
           temperature: c.temperature,
-          maxTokens: c.maxOutputTokens,
-          model: modelFor(c, name) || undefined,
+          maxTokens: profile?.maxOutputTokens ?? c.maxOutputTokens,
+          timeoutMs: profile?.timeoutMs,
+          model: model || undefined,
         }),
       );
     }
@@ -166,6 +179,7 @@ export class BrainRuntime {
       dm: this.dm,
       llm: this.llm,
       log: this.log,
+      decisions: this.decisions,
     };
     for (const b of this.brains) {
       b.observe({ ...world, submit: () => Promise.resolve() });

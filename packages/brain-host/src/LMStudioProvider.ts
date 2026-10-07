@@ -1,3 +1,4 @@
+import { remoteEndpointReason } from "./LocalEndpoint";
 import type {
   ChatRequest,
   ChatResult,
@@ -14,6 +15,10 @@ export interface LMStudioOptions {
   timeoutMs: number;
   /** false = no native tools; tools are described in the prompt and parsed from content. */
   toolCalling: boolean;
+  /** Only "ollama" changes behaviour (model unloading); all speak the same chat API. */
+  backend?: string;
+  /** Sampling seed sent with every request, for repeatable runs. */
+  seed?: number;
   fetch?: typeof fetch;
 }
 
@@ -79,14 +84,32 @@ export function parseToolCallsFromContent(text: string): ToolCall[] {
 }
 
 export class LMStudioProvider implements LLMProvider {
-  constructor(private o: LMStudioOptions) {}
+  constructor(private o: LMStudioOptions) {
+    const why = remoteEndpointReason(o.baseUrl);
+    if (why) throw new Error(`refusing ${o.baseUrl}: ${why}`);
+  }
+
+  /** Ollama only: keep_alive 0 drops the model from memory. */
+  async unload(model: string): Promise<Result<void>> {
+    if (this.o.backend !== "ollama") return { ok: true, value: undefined };
+    const origin = new URL(this.o.baseUrl).origin;
+    const r = await this.request(
+      "/api/generate",
+      { method: "POST", body: JSON.stringify({ model, keep_alive: 0 }) },
+      undefined,
+      origin,
+    );
+    return r.ok ? { ok: true, value: undefined } : r;
+  }
 
   private async request(
     path: string,
     init: RequestInit,
     signal?: AbortSignal,
+    base: string = this.o.baseUrl,
+    timeoutMs: number = this.o.timeoutMs,
   ): Promise<Result<any>> {
-    const timeout = AbortSignal.timeout(this.o.timeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -95,13 +118,14 @@ export class LMStudioProvider implements LLMProvider {
     let res: Response;
     try {
       res = await (this.o.fetch ?? fetch)(
-        this.o.baseUrl.replace(/\/+$/, "") + path,
-        { ...init, headers, signal: sig },
+        base.replace(/\/+$/, "") + path,
+        // A redirect could carry the prompt to another host.
+        { ...init, headers, signal: sig, redirect: "error" },
       );
     } catch (e) {
       if (signal?.aborted) return fail("cancelled", "request cancelled");
       if (timeout.aborted)
-        return fail("timeout", `no response in ${this.o.timeoutMs}ms`);
+        return fail("timeout", `no response in ${timeoutMs}ms`);
       return fail("offline", String((e as Error)?.message ?? e));
     }
     if (!res.ok) {
@@ -151,6 +175,7 @@ export class LMStudioProvider implements LLMProvider {
       stream: false,
     };
     if (model) body.model = model;
+    if (this.o.seed !== undefined) body.seed = this.o.seed;
     if (native)
       body.tools = req.tools!.map((t) => ({ type: "function", function: t }));
 
@@ -158,6 +183,8 @@ export class LMStudioProvider implements LLMProvider {
       "/chat/completions",
       { method: "POST", body: JSON.stringify(body) },
       req.signal,
+      undefined,
+      req.timeoutMs,
     );
     if (!r.ok) return r;
     const msg = r.value?.choices?.[0]?.message;

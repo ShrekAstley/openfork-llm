@@ -56,6 +56,7 @@ async function liveGame(provider: LLMProvider, interval = 1) {
   const rt = new BrainRuntime({
     config: BrainConfigSchema.parse({
       decisionIntervalSeconds: interval,
+      quietBackoffMax: 1,
       empires: {
         [brainName]: {
           personality: "Cautious expansionist.",

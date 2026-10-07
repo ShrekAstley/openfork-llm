@@ -73,19 +73,41 @@ const TOOLS = {
     "Reject a treaty proposed to you, by its id.",
     z.object({ treatyId: z.string().min(1).max(32) }),
   ],
+  remember: [
+    "Keep one fact for the rest of the game (a betrayal, a promise, a long-term goal). Only what you will need later.",
+    z.object({
+      note: z.string().min(1).max(140),
+      importance: z.number().int().min(1).max(5).default(3),
+    }),
+  ],
 } as const satisfies Record<string, readonly [string, z.ZodType]>;
 export type ToolName = keyof typeof TOOLS;
 
+/** Optional one-line reason every action tool accepts; shown in the decision log. */
+const REASON = {
+  type: "string",
+  maxLength: 160,
+  description: "optional: why, in one short sentence",
+};
+const NO_REASON = new Set([
+  "plan",
+  "remember",
+  "accept_treaty",
+  "reject_treaty",
+]);
+
 export const toolDefs = (): ToolDef[] =>
-  Object.entries(TOOLS).map(([name, [description, schema]]) => ({
-    name,
-    description,
-    parameters: z.toJSONSchema(schema) as Record<string, unknown>,
-  }));
+  Object.entries(TOOLS).map(([name, [description, schema]]) => {
+    const parameters = z.toJSONSchema(schema) as Record<string, any>;
+    if (!NO_REASON.has(name))
+      parameters.properties = { ...parameters.properties, reason: REASON };
+    return { name, description, parameters };
+  });
 
 export type Action =
   | { kind: "plan"; objective: string; summary: string }
-  | { kind: "act"; label: string; engine: Intent[] }
+  | { kind: "remember"; note: string; importance: number }
+  | { kind: "act"; label: string; engine: Intent[]; reason?: string }
   | { kind: "rejected"; text: string };
 
 export interface ActionContext {
@@ -101,7 +123,8 @@ export interface ActionContext {
  * the DiplomacyManager and returns the engine intents to submit.
  */
 export function resolveAction(call: ToolCall, c: ActionContext): Action {
-  const label = `${call.name} ${JSON.stringify(call.arguments)}`.slice(0, 160);
+  const { reason: rawReason, ...args } = call.arguments;
+  const label = `${call.name} ${JSON.stringify(args)}`.slice(0, 160);
   const no = (why: string): Action => ({
     kind: "rejected",
     text: `ACTION REJECTED ${label}: ${why}`,
@@ -110,7 +133,11 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
     call.name
   ];
   if (!entry) return no("unknown tool");
-  const parsed = entry[1].safeParse(call.arguments);
+  const reason =
+    typeof rawReason === "string"
+      ? rawReason.replace(/\s+/g, " ").trim().slice(0, 160) || undefined
+      : undefined;
+  const parsed = entry[1].safeParse(args);
   if (!parsed.success) {
     const i = parsed.error.issues[0];
     return no(`${i.path.join(".") || "arguments"}: ${i.message}`);
@@ -118,6 +145,8 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
   const a = parsed.data as any;
   if (call.name === "plan")
     return { kind: "plan", objective: a.objective, summary: a.summary };
+  if (call.name === "remember")
+    return { kind: "remember", note: a.note, importance: a.importance };
 
   const { game, me } = c;
 
@@ -147,7 +176,7 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
             () => "",
           )
         : [];
-    return { kind: "act", label, engine };
+    return { kind: "act", label, engine, reason };
   }
 
   const wild = String(a.target).toLowerCase() === "wilderness";
@@ -293,5 +322,5 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
     c.dm.recordTurn(c.turn, me.name(), [dip]);
     engine = toEngineIntent(dip, id);
   }
-  return { kind: "act", label, engine };
+  return { kind: "act", label, engine, reason };
 }

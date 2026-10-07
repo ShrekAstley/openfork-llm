@@ -117,6 +117,7 @@ export async function liveDuoGame(
     const rt = new BrainRuntime({
       config: BrainConfigSchema.parse({
         decisionIntervalSeconds: 1,
+        quietBackoffMax: 1,
         maxConcurrentRequests: 2,
         ...o,
       }),

@@ -12,6 +12,7 @@ export const BRAIN_STATE_VERSION = 1;
 export const SchedulerStateSchema = z.object({
   next: z.number().int().min(0),
   pending: z.number().int().min(0).max(3).nullable(),
+  quiet: z.number().int().min(0).default(0),
 });
 export type SchedulerState = z.infer<typeof SchedulerStateSchema>;
 
@@ -39,6 +40,19 @@ export const EmpireBrainStateSchema = z.object({
     }),
   ),
   scheduler: SchedulerStateSchema,
+  /** The empire's ranked long-term memory. */
+  memories: z
+    .array(
+      z.object({
+        tick: z.number().int().min(0),
+        importance: z.number().int().min(1).max(5),
+        kind: z.enum(["event", "decision", "note", "summary"]),
+        text: z.string(),
+        count: z.number().int().optional(),
+        from: z.number().int().optional(),
+      }),
+    )
+    .default([]),
   /** What the last step saw on the replica, so a resume raises no false events. */
   seen: z.object({
     messages: strings,

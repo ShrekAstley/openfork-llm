@@ -1,3 +1,4 @@
+import { type LLMCache, requestKey } from "./LLMCache";
 import type { ChatRequest, ChatResult, LLMError, LLMProvider } from "./types";
 
 export interface RequestMeta {
@@ -18,6 +19,10 @@ export interface InferenceResult {
   error?: LLMError;
   meta: RequestMeta;
   latencyMs: number;
+  /** Hash of the request: what the decision log and the cache are keyed by. */
+  key: string;
+  /** Answered from the cache; the model was not called. */
+  cached: boolean;
   /** chars / 4 estimates. */
   tokensIn: number;
   tokensOut: number;
@@ -33,6 +38,14 @@ export interface LLMManagerOptions {
   /** True if a response for this meta is too old to apply. Checked at dequeue and on response. */
   isStale?: (meta: RequestMeta) => boolean;
   fallback?: ChatResult;
+  cache?: LLMCache;
+  seed?: number;
+  /**
+   * Called with the model that was loaded before, when a different one is
+   * about to be used and residency is "swap". Failures are ignored.
+   */
+  unload?: (model: string) => Promise<unknown>;
+  residency?: "keep" | "swap";
 }
 
 interface Job {
@@ -41,6 +54,8 @@ interface Job {
   seq: number;
   ctrl: AbortController;
   done: boolean;
+  key: string;
+  cached?: boolean;
   resolve: (r: InferenceResult) => void;
 }
 
@@ -51,6 +66,7 @@ export class LLMManager {
   private queue: Job[] = [];
   private running = 0;
   private seq = 0;
+  private lastModel: string | undefined;
 
   constructor(
     private provider: LLMProvider,
@@ -62,7 +78,15 @@ export class LLMManager {
     const ctrl = new AbortController();
     let job!: Job;
     const promise = new Promise<InferenceResult>((resolve) => {
-      job = { meta, req, seq: this.seq++, ctrl, done: false, resolve };
+      job = {
+        meta,
+        req,
+        seq: this.seq++,
+        ctrl,
+        done: false,
+        key: requestKey(req, this.o.seed),
+        resolve,
+      };
     });
     this.queue.push(job);
     this.pump();
@@ -99,6 +123,8 @@ export class LLMManager {
       error,
       meta: job.meta,
       latencyMs,
+      key: job.key,
+      cached: job.cached ?? false,
       tokensIn: estTokens(
         job.req.messages.reduce((n, m) => n + m.content.length, 0),
       ),
@@ -116,13 +142,36 @@ export class LLMManager {
         const b = this.queue[best];
         if (
           a.meta.priority > b.meta.priority ||
-          (a.meta.priority === b.meta.priority && a.seq < b.seq)
+          (a.meta.priority === b.meta.priority &&
+            this.better(a, b, this.lastModel))
         )
           best = i;
       }
+      // Swapping models: let the running requests finish on the loaded one.
+      const next = this.queue[best].req.model;
+      if (
+        this.o.residency === "swap" &&
+        this.running > 0 &&
+        this.lastModel !== undefined &&
+        next !== this.lastModel
+      )
+        break;
       const job = this.queue.splice(best, 1)[0];
       if (this.o.isStale?.(job.meta)) {
         this.finish(job, "stale", 0);
+        continue;
+      }
+      const hit = this.o.cache?.get(job.key);
+      if (hit) {
+        job.cached = true;
+        this.finish(job, "ok", 0, hit);
+        continue;
+      }
+      if (this.o.cache?.mode === "replay") {
+        this.finish(job, "failed", 0, undefined, {
+          kind: "offline",
+          message: "replay: no recorded answer for this request",
+        });
         continue;
       }
       this.running++;
@@ -130,7 +179,27 @@ export class LLMManager {
     }
   }
 
+  /**
+   * Same priority: keep using the model that is already loaded before
+   * paying a load for another one, then first come first served.
+   */
+  private better(a: Job, b: Job, loaded: string | undefined): boolean {
+    const am = a.req.model === loaded;
+    const bm = b.req.model === loaded;
+    if (am !== bm) return am;
+    return a.seq < b.seq;
+  }
+
   private async run(job: Job) {
+    const model = job.req.model;
+    if (
+      this.o.residency === "swap" &&
+      model !== undefined &&
+      this.lastModel !== undefined &&
+      this.lastModel !== model
+    )
+      await this.o.unload?.(this.lastModel).catch(() => {});
+    this.lastModel = model;
     const t0 = performance.now();
     let r: Awaited<ReturnType<LLMProvider["chat"]>>;
     try {
@@ -151,7 +220,10 @@ export class LLMManager {
         r.error,
       );
     else if (this.o.isStale?.(job.meta)) this.finish(job, "stale", ms);
-    else this.finish(job, "ok", ms, r.value);
+    else {
+      this.o.cache?.set(job.key, r.value);
+      this.finish(job, "ok", ms, r.value);
+    }
     this.running--;
     this.pump();
   }
