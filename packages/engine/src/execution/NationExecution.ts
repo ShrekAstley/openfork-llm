@@ -189,6 +189,17 @@ export class NationExecution implements Execution {
       return;
     }
 
+    // A Brain Host drives this nation through intents; only the spawn above
+    // stays automatic.
+    if (
+      this.mg
+        .config()
+        .gameConfig()
+        .brainNations?.includes(this.nation.playerInfo.name)
+    ) {
+      return;
+    }
+
     if (!this.behaviorsInitialized) {
       this.initializeBehaviors();
       this.attackBehavior.forceSendAttack(this.mg.terraNullius());

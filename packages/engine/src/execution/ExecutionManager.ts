@@ -1,4 +1,6 @@
+import { PlayerType } from "@openfront/engine-api/game/GameTypes";
 import {
+  brainNationIndex,
   ClientID,
   GameID,
   StampedIntent,
@@ -6,7 +8,7 @@ import {
 } from "@openfront/engine-api/Schemas";
 import { PseudoRandom } from "@openfront/engine-lib/PseudoRandom";
 import { simpleHash } from "@openfront/engine-lib/Util";
-import { Execution, Game } from "../game/Game";
+import { Execution, Game, Player } from "../game/Game";
 import { AllianceExtensionExecution } from "./alliance/AllianceExtensionExecution";
 import { AllianceRejectExecution } from "./alliance/AllianceRejectExecution";
 import { AllianceRequestExecution } from "./alliance/AllianceRequestExecution";
@@ -58,7 +60,9 @@ export class Executor {
   }
 
   createExec(intent: StampedIntent): Execution {
-    const player = this.mg.playerByClientID(intent.clientID);
+    const player =
+      this.mg.playerByClientID(intent.clientID) ??
+      this.brainNation(intent.clientID);
     if (!player) {
       console.warn(`player with clientID ${intent.clientID} not found`);
       return new NoOpExecution();
@@ -147,6 +151,19 @@ export class Executor {
       default:
         throw new Error(`intent type ${intent} not found`);
     }
+  }
+
+  // The nation a Brain Host clientID drives (GameConfig.brainNations).
+  private brainNation(clientID: ClientID): Player | null {
+    const index = brainNationIndex(clientID);
+    if (index < 0) return null;
+    const name = this.mg.config().gameConfig().brainNations?.[index];
+    return (
+      this.mg
+        .allPlayers()
+        .find((p) => p.type() === PlayerType.Nation && p.name() === name) ??
+      null
+    );
   }
 
   spawnTribes(numTribes: number): SpawnExecution[] {

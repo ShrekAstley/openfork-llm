@@ -37,6 +37,9 @@ const MAX_TEAM_MEMBERS = 50;
 // sibling list would otherwise allow.
 const MAX_POOL_MEMBERS = 8;
 
+// Turns per /turns response; a Brain Host catching up just asks again.
+const MAX_TURNS_PER_FETCH = 3000;
+
 function timingSafeEqualStr(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -471,4 +474,55 @@ export function registerAdminBotRoutes(opts: {
     log.info(`admin bot intent ${parsed.data.type} on game ${id}`);
     res.json(game.gameInfo());
   });
+
+  // LLMFront Brain Host observation feed: start info + turns from `from`,
+  // which the Brain Host replays headlessly (ENGINE_INTEGRATION.md d).
+  app.get("/api/adminbot/game/:id/turns", requireAdminBotKey, (req, res) => {
+    const id = req.params.id as string;
+    if (!ownsGame(id, res)) return;
+    const from = z.coerce
+      .number()
+      .int()
+      .min(0)
+      .safeParse(req.query.from ?? 0);
+    if (!from.success) return res.status(400).json({ error: "bad from" });
+    const game = gm.game(id);
+    if (game === null) {
+      return res.status(404).json({ error: "Game not found" });
+    }
+    const feed = game.recordedTurns(from.data, MAX_TURNS_PER_FETCH);
+    if (feed === null) return res.status(409).json({ error: "not started" });
+    res.json(feed);
+  });
+
+  // LLMFront Brain Host: a gameplay intent for one brain-controlled nation.
+  app.post(
+    "/api/adminbot/game/:id/brain_intent",
+    requireAdminBotKey,
+    (req, res) => {
+      const id = req.params.id as string;
+      if (!ownsGame(id, res)) return;
+
+      const parsed = z
+        .object({ nation: z.string().min(1).max(64), intent: IntentSchema })
+        .safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: z.prettifyError(parsed.error) });
+      }
+      const game = gm.game(id);
+      if (game === null) {
+        return res.status(404).json({ error: "Game not found" });
+      }
+
+      const { nation, intent } = parsed.data;
+      const result = game.handleBrainIntent(nation, intent);
+      if (result.status !== 200) {
+        return res
+          .status(result.status)
+          .json({ error: result.error ?? "error" });
+      }
+      log.info(`brain intent ${intent.type} for ${nation} on game ${id}`);
+      res.json({ ok: true });
+    },
+  );
 }

@@ -9,6 +9,7 @@ import {
 import { maps } from "@openfront/engine-api/game/Maps.gen";
 import {
   AllPlayersStats,
+  brainClientID,
   ClientID,
   GameConfig,
   GameID,
@@ -478,6 +479,44 @@ export class GameServer {
         return outcome;
       }
     }
+  }
+
+  // A gameplay intent from the Brain Host (admin-bot HTTP API) for one of the
+  // nations GameConfig.brainNations hands it. Stamped with that nation's
+  // brainClientID; the engine executions still judge whether the move is legal.
+  public handleBrainIntent(nation: string, intent: Intent): IntentOutcome {
+    if (this.isPublic()) {
+      return { status: 403, error: "no brain nations in public games" };
+    }
+    const index = this.gameConfig.brainNations?.indexOf(nation) ?? -1;
+    if (index < 0) {
+      return { status: 403, error: "not a brain-controlled nation" };
+    }
+    if (!this.hasStarted()) {
+      return { status: 409, error: "game not started" };
+    }
+    // Neither creator nor admin: authorizeIntent turns away every control
+    // intent (kick, config, pause, mark_disconnected...).
+    return this.handleIntent(intent, {
+      clientID: brainClientID(index),
+      isLobbyCreator: false,
+      isAdmin: false,
+      isAdminBot: false,
+    });
+  }
+
+  // The Brain Host's observation feed: what the winner replay runs on (start
+  // info + turn log), from turn `from` on, at most `max` turns. Null before
+  // start. Read-only.
+  public recordedTurns(
+    from: number,
+    max: number,
+  ): { gameStartInfo: WireGameStartInfo; turns: Turn[] } | null {
+    if (!this.hasStarted()) return null;
+    return {
+      gameStartInfo: this.wireGameStartInfo,
+      turns: this.turns.slice(from, from + max),
+    };
   }
 
   private isKicked(clientID: ClientID): boolean {

@@ -300,6 +300,10 @@ export const GameConfigSchema = z.object({
   maxPlayers: zb.uint().optional(),
   // OFM: allowlist of publicIds allowed to join (admin-only, see create_game).
   allowedPublicIds: z.array(z.string()).max(200).optional(),
+  // LLMFront: names of the nations a Brain Host drives instead of their AI
+  // (NationExecution goes passive). The nation at index i acts through the
+  // intents stamped with brainClientID(i). Names must be unique on the map.
+  brainNations: z.array(z.string().min(1).max(64)).max(32).optional(),
   // Only accounts the API reports as trusted (users/@me `trustTier`) may join.
   // Enforced server-side at join (GameServer.joinClient); advertised in the
   // lobby browser so a card can show a lock. No host UI yet: set through
@@ -580,6 +584,18 @@ export type StampedIntent = Intent & { clientID: ClientID };
 // queue — needs a valid clientID. Chosen so it can never collide with a real id:
 // generateID() omits 0/l/I/O, and this contains I and O.
 export const ADMIN_BOT_CLIENT_ID: ClientID = "ADMINBOT";
+
+// Placeholder clientIDs for Brain Host intents (GameConfig.brainNations).
+// "BRAIN" holds an I, which generateID() never emits, so no real client can
+// collide with one.
+export const brainClientID = (index: number): ClientID =>
+  `BRAIN${String(index).padStart(3, "0")}`;
+
+/** The brainNations index a clientID stands for, or -1. */
+export function brainNationIndex(clientID: ClientID): number {
+  const m = /^BRAIN(\d{3})$/.exec(clientID);
+  return m === null ? -1 : Number(m[1]);
+}
 
 //
 // Server utility types
