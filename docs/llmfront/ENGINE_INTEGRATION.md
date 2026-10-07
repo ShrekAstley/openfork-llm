@@ -100,13 +100,14 @@ Empires talk through the `DiplomacyManager`; nothing is delivered directly betwe
 - **Reply.** One LLMManager request per decision, so conversation shares the same priority queue, timeout, stale and fallback rules as everything else. The model answers with `send_message`, `accept_treaty` / `reject_treaty` (by id; only the addressee may) or ignores it.
 - **Inbox lifetime.** Messages leave the inbox only when a decision that included them is applied. A stale, failed or offline cycle drops nothing: the next successful cycle sees them.
 - **Proposal lifetime.** `DiplomacyManager.proposalTtl` (set by `BrainRuntime` to `3 * decisionIntervalSeconds + maxDecisionAgeSeconds`, DM turns are simulated seconds) keeps a proposal open across several cycles. The library default (5 turns) is unchanged elsewhere.
+- **Signing is public.** `accept_treaty` on a non-secret treaty also sends a `diplomatic_message` to `AllPlayers` ("We signed a <type> treaty with <proposer>."), written by the host, not the model. Proposals and rejections stay Brain Host state.
 - **Personality** is prompt text only (`PERSONALITY & DIRECTIVES`); no code branches on it. `tests/server/BrainConversation.test.ts` covers the round trip, negotiation to treaty, a stale reply, and LLM offline, all with `MockProvider`.
 
 ## Save and resume
 
 `npm run brain:run -- --game <id> [--state brain.state.json] [--resume] [--save-every 15]` writes one JSON file (`BrainState.ts`, version 1) every 15 s and on Ctrl-C, through a temp file and a rename. `--resume` loads it before the first step; a missing, unparsable, wrong-version or invalid file stops the process with a readable error.
 - **Saved:** the `DiplomacyManager` state (the existing `snapshot()`), each brain's bounded memory (events, rejections, decisions, inbox, revision), what its last step saw on the replica (so a resume raises no false "alliance formed" events), and its `DecisionScheduler` cursors (`next`, `pending`).
-- **Not saved:** the game (the replica replays the server's turn log from turn 0 on resume), requests in flight (a decision in flight at the crash is lost; the scheduler's cursor has already moved on, so the next one comes a period later, and unanswered messages stay in the inbox), config and credentials.
+- **Not saved:** the game (the replica replays the server's turn log from turn 0 on resume), requests in flight (but their trigger is: while a request is out, the saved scheduler cursor and rejections are those from before it went out, so the resumed brain asks again at once; unanswered messages stay in the inbox), config and credentials.
 - **Game check:** the file holds the game id. A file for another game stops the run (`ResumeMismatchError`, not retried), and nothing is saved over it.
 - Tests: `tests/server/BrainState.test.ts` (file round trip, resume mid-conversation with an unanswered message, mismatch, scheduler).
 
@@ -116,5 +117,4 @@ Empires talk through the `DiplomacyManager`; nothing is delivered directly betwe
 2. Fog: the in-game HUD shows every player's troop count on their name label. The runtime hides exact enemy troops anyway (as specified). Keep that, or show what a human sees?
 3. `diplomatic_message` is built. Do private messages need a non-turn channel (server-to-recipient)? Today none exists. There is also no per-sender rate limit on messages (see 4).
 4. A per-nation intent rate cap on the route (none today beyond the key).
-5. Signed treaties are Brain Host state only, so humans never see them in the game feed. Should a signed treaty also raise a public `diplomatic_message`?
-6. `@openfront/engine-api` is imported by brain-host through the workspace symlink but isn't in `packages/brain-host/package.json`. Adding it changes the lockfile.
+5. `@openfront/engine-api` is imported by brain-host through the workspace symlink but isn't in `packages/brain-host/package.json`. Adding it changes the lockfile.

@@ -88,19 +88,28 @@ export class EmpireBrain {
     this.scheduler = new DecisionScheduler(o.intervalTicks);
   }
 
-  /** Plain JSON data; an in-flight request is not part of it. */
+  /** Scheduler cursor and rejections as they were before the request in flight. */
+  private inFlight?: {
+    scheduler: { next: number; pending: number | null };
+    rejected: string[];
+  };
+
+  /**
+   * Plain JSON data. A request in flight is not saved; its trigger is: the
+   * scheduler and rejections are as they were before it went out.
+   */
   snapshot(): EmpireBrainState {
     return {
       revision: this.revision,
       events: [...this.events],
-      rejected: [...this.rejected],
+      rejected: [...(this.inFlight?.rejected ?? this.rejected)],
       history: this.history.map((d) => ({
         ...d,
         actions: [...d.actions],
         rejected: [...d.rejected],
       })),
       inbox: this.inbox.map((m) => ({ ...m })),
-      scheduler: this.scheduler.snapshot(),
+      scheduler: this.inFlight?.scheduler ?? this.scheduler.snapshot(),
       seen: {
         messages: [...this.seenMessages],
         treaties: [...this.seenTreaties],
@@ -273,8 +282,12 @@ export class EmpireBrain {
   maybeDecide(w: BrainWorld): Promise<void> | null {
     const me = this.me(w.game);
     if (!me || !me.isAlive() || w.game.inSpawnPhase()) return null;
+    const cursor = this.scheduler.snapshot();
     const wake = this.scheduler.poll(w.game.ticks(), this.busy);
     if (wake === null) return null;
+    // What a save made while this request is out records instead: a crash
+    // must not cost the decision, so the resumed brain wakes for it again.
+    this.inFlight = { scheduler: cursor, rejected: this.rejected };
 
     const last = this.history[this.history.length - 1];
     const observation = buildObservation({
@@ -320,6 +333,7 @@ export class EmpireBrain {
       .promise.then((r) => this.apply(w, r, answered))
       .catch((e) => w.log(`${this.o.name}: ${String(e)}`))
       .finally(() => {
+        this.inFlight = undefined;
         this.busy = false;
       });
   }

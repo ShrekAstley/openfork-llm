@@ -133,7 +133,21 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
         `${v.reason}${Object.keys(v.details).length ? " " + JSON.stringify(v.details) : ""}`,
       );
     c.dm.recordTurn(c.turn, me.name(), [dip]);
-    return { kind: "act", label, engine: [] };
+    // A signed treaty is announced to every player. The host writes the
+    // line, not the model.
+    const t = c.dm.state.treaties[a.treatyId];
+    const engine: Intent[] =
+      dip.type === "ACCEPT_TREATY" && !t.secret
+        ? toEngineIntent(
+            {
+              type: "SEND_DIPLOMATIC_MESSAGE",
+              text: `We signed a ${t.type.replace(/_/g, "-")} treaty with ${t.proposer}.`,
+              channel: "public",
+            },
+            () => "",
+          )
+        : [];
+    return { kind: "act", label, engine };
   }
 
   const wild = String(a.target).toLowerCase() === "wilderness";

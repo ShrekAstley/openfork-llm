@@ -145,10 +145,16 @@ describe("Brain Host conversation", () => {
     const usCalls = callsOf(g.provider, US);
     const last = usCalls[usCalls.length - 1];
     expect(prompt(last)).toContain(`Treaty ${treaty.id} non_aggression active`);
-    // A treaty has no engine twin: nothing reached the game.
-    expect(g.recorded().filter((i) => i.clientID.startsWith("BRAIN"))).toEqual(
-      [],
-    );
+    // The proposal stays Brain Host state; the signing is announced to
+    // everyone, in the host's words, from the nation that accepted.
+    expect(g.recorded().filter((i) => i.clientID.startsWith("BRAIN"))).toEqual([
+      {
+        type: "diplomatic_message",
+        recipient: "AllPlayers",
+        text: "We signed a non-aggression treaty with United States.",
+        clientID: brainClientID(1),
+      },
+    ]);
   });
 
   it("lets the recipient reject a proposal", async () => {

@@ -12,9 +12,11 @@ import {
   DecisionScheduler,
   Importance,
 } from "../../packages/brain-host/src/DecisionScheduler";
+import type { ChatResult, Result } from "../../packages/brain-host/src/types";
 import { ServerEnv } from "../../src/server/ServerEnv";
 import {
   CA,
+  callsOf,
   liveDuoGame,
   ok,
   plan,
@@ -164,6 +166,37 @@ describe("Brain Host resume", () => {
       ),
     ).toBe(true);
     expect(g.brain(CA).inbox).toEqual([]);
+  });
+
+  it("does not lose a decision that was in flight at the save", async () => {
+    let release!: (r: Result<ChatResult>) => void;
+    let hold = false;
+    const g = await liveDuoGame((req) => {
+      if (hold && who(req) === CA) return new Promise((r) => (release = r));
+      return ok([plan]);
+    });
+    await g.pastSpawn();
+    await g.tick(3);
+    hold = true;
+    for (let i = 0; i < 100 && !release; i++) await g.tickNoWait(1);
+    expect(release).toBeDefined();
+    const brain = g.brain(CA);
+    expect(brain.busy).toBe(true);
+    // Mid-request: the saved cursor is the one that woke it, not the next one.
+    const inFlight = brain.snapshot().scheduler;
+    const after = brain.scheduler.snapshot();
+    expect(inFlight.next).toBeLessThan(after.next);
+    const state = g.rt.snapshot()!;
+    release(ok([plan]));
+    await g.rt.settled();
+
+    // Crash and resume: the lost request is asked again straight away.
+    g.restart(() => ok([plan]));
+    g.rt.restore(state);
+    await g.tick(1);
+    const before = callsOf(g.provider, CA).length;
+    await g.tick(3);
+    expect(callsOf(g.provider, CA).length).toBeGreaterThan(before);
   });
 
   it("refuses a state saved for another game, and keeps it intact", async () => {
