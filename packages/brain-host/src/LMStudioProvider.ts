@@ -104,7 +104,16 @@ export class LMStudioProvider implements LLMProvider {
         return fail("timeout", `no response in ${this.o.timeoutMs}ms`);
       return fail("offline", String((e as Error)?.message ?? e));
     }
-    if (!res.ok) return fail("bad_status", `HTTP ${res.status}`, res.status);
+    if (!res.ok) {
+      // The server's own explanation ("no models loaded", "tools not
+      // supported"...) is what tells the user what to fix.
+      const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ");
+      return fail(
+        "bad_status",
+        `HTTP ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+        res.status,
+      );
+    }
     try {
       return { ok: true, value: await res.json() };
     } catch {

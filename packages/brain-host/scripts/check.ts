@@ -11,4 +11,6 @@ console.log(
     2,
   ),
 );
-process.exit(report.ok ? 0 : 1);
+// exitCode, not exit(): exiting with a fetch still closing trips a libuv
+// assertion on Windows.
+process.exitCode = report.ok ? 0 : 1;

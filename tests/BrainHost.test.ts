@@ -126,6 +126,17 @@ describe("provider errors", () => {
     const r = await provider(f as typeof fetch).chat({ ...req, tools });
     expect(r.ok === false && r.error.kind).toBe(kind);
   });
+  test("a bad status carries the server's explanation", async () => {
+    const r = await provider((async () =>
+      json(
+        { error: "No models loaded. Please load a model." },
+        400,
+      )) as typeof fetch).chat(req);
+    expect(r.ok === false && r.error.status).toBe(400);
+    expect(r.ok === false && r.error.message).toMatch(
+      /^HTTP 400: .*No models loaded/,
+    );
+  });
   test("timeout", async () => {
     const hang = (_u: unknown, init?: RequestInit) =>
       new Promise<Response>((_, rej) =>
