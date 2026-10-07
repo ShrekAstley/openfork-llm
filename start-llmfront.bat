@@ -17,6 +17,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not defined BRAIN_MODEL (
+  for /f "usebackq delims=" %%m in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0find-lmstudio-model.ps1"`) do set "BRAIN_MODEL=%%m"
+)
+if defined BRAIN_MODEL (echo Using LM Studio model: %BRAIN_MODEL%) else (echo Could not tell which model is loaded; using LM Studio's default.)
+
 echo [3/5] Starting the game server in a new window...
 start "OpenFront server" cmd /k "cd /d %~dp0 && npm run dev"
 
