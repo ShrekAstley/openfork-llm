@@ -1,5 +1,9 @@
 import { GameType } from "@openfront/engine-api/game/GameTypes";
-import { ClientID, Intent } from "@openfront/engine-api/Schemas";
+import {
+  brainNationIndex,
+  ClientID,
+  Intent,
+} from "@openfront/engine-api/Schemas";
 import { hostCheatsEnabled } from "./ConfigPatch";
 
 export interface IntentActor {
@@ -43,6 +47,17 @@ export function authorizeIntent(
   switch (intent.type) {
     case "mark_disconnected":
       return { status: 400, error: "mark_disconnected is server-internal" };
+
+    case "diplomatic_message":
+      // Free text, so only the Brain Host's nations may send it; no player
+      // can broadcast arbitrary text through the intent channel.
+      if (brainNationIndex(actor.clientID) < 0) {
+        return {
+          status: 403,
+          error: "only brain-controlled nations can send diplomatic messages",
+        };
+      }
+      return null;
 
     case "kick_player":
       if (!actor.isLobbyCreator && !actor.isAdmin) {

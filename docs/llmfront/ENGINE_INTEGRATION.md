@@ -40,9 +40,14 @@ A separate WebSocket would mean lower latency and push observation, but it adds 
 | SEND_AID gold/troops | `donate_gold` / `donate_troops` (engine config gates, e.g. `donateGold`) | existing |
 | REQUEST_AID | `emoji` / `quick_chat` (fixed keys), or a free-text message | existing (crude) / new |
 | military (outside diplomacy) | `attack`, `boat`, `build_unit` (incl. nukes), `move_warship`, `upgrade_structure`, `delete_unit` | existing |
-| SEND_DIPLOMATIC_MESSAGE, PROPOSE/ACCEPT/REJECT_TREATY, SHARE_INTELLIGENCE | **one new intent `diplomatic_message {recipient: PlayerID or AllPlayers, text}`** plus a display-only execution (`displayMessage`) | **new, not built** |
+| SEND_DIPLOMATIC_MESSAGE | `diplomatic_message {recipient: PlayerID or AllPlayers, text}` (1-200 chars, `MAX_DIPLOMATIC_MESSAGE_LENGTH`); `DiplomaticMessageExecution` raises a display event (`events_display.diplomatic_message`, `MessageType.DIPLOMATIC_MESSAGE`) for the recipient, or everyone. No target = `AllPlayers`. Text over 200 is cut in `toEngineIntent`. | **built** |
+| PROPOSE/ACCEPT/REJECT_TREATY, SHARE_INTELLIGENCE | none: Brain Host state; they reach the engine only as a `diplomatic_message` when a model chooses to say something | Brain Host only |
 
-Minimal new engine surface: just `diplomatic_message`. Treaties, trade terms, intel levels and relationships stay in Brain Host and only *render* as messages and *act* through existing intents. Caveat: anything in a Turn reaches every client, so "private" or "secret" text is readable in devtools. Truly secret content must not go through turns (it would need a server-to-recipient side channel).
+Minimal new engine surface: just `diplomatic_message`, display-only (it changes no state; tests/DiplomaticMessage.test.ts checks the fingerprint is identical with and without it). Treaties, trade terms, intel levels and relationships stay in Brain Host and only *render* as messages and *act* through existing intents.
+
+**Turn contents are visible to all clients.** Anything in a Turn reaches every client, so a `diplomatic_message` addressed to one recipient is still readable by anyone watching the wire or replaying the turns; the UI only *shows* it to the recipient. The Brain Host's `channel: "private"` and `secret` flags are Brain Host bookkeeping, not confidentiality in the engine. "Secret" text (secret treaties, `SHARE_INTELLIGENCE`, private negotiation) must stay Brain-Host-only and never be sent as a `diplomatic_message`. The `send_message` tool's description tells the model that every player can read what it sends.
+
+Who may send: the intent is rejected for everyone but a brain clientID (`authorizeIntent`, 403), and the engine ignores it unless the sender is a nation named in `brainNations`. The client renders the text as plain text (not through `unsafeHTML`).
 
 ## d. Observation: decision
 
@@ -60,6 +65,7 @@ The Brain Host runs its own **headless `GameRunner` replica** fed the same turns
 - `packages/engine/src/execution/ExecutionManager.ts`: Executor resolves brain clientIDs to nations
 - `packages/engine/src/execution/NationExecution.ts`: passive after spawn when brain-controlled
 - `src/server/GameServer.ts`: `handleBrainIntent`
+- `packages/engine/src/execution/DiplomaticMessageExecution.ts`, `src/server/IntentAuthorization.ts`, `src/client/hud/layers/EventsDisplay.ts`: `diplomatic_message`
 - `src/server/AdminBotRoutes.ts`: `POST /api/adminbot/game/:id/brain_intent`
 - `packages/brain-host/src/EngineBridge.ts`: `toEngineIntent` (FORM_ALLIANCE, DECLARE_WAR, OFFER_PEACE, SEND_AID → `Intent[]`), `submitEngineIntent`, `fetchTurns`
 - `src/server/AdminBotRoutes.ts` + `GameServer.recordedTurns`: `GET /api/adminbot/game/:id/turns`
@@ -89,6 +95,6 @@ Tests: `tests/server/BrainRuntime.test.ts` (scheduler, live in-process game end-
 
 1. Should `brainNations` be host-editable from the lobby UI? It isn't in `ConfigPatch.COPIED_KEYS` yet, so only admin-bot `create_game` can set it.
 2. Fog: the in-game HUD shows every player's troop count on their name label. The runtime hides exact enemy troops anyway (as specified). Keep that, or show what a human sees?
-3. Build `diplomatic_message`, and do private messages need a non-turn channel?
+3. `diplomatic_message` is built. Do private messages need a non-turn channel (server-to-recipient)? Today none exists. There is also no per-sender rate limit on messages (see 4).
 4. A per-nation intent rate cap on the route (none today beyond the key).
 5. `@openfront/engine-api` is imported by brain-host through the workspace symlink but isn't in `packages/brain-host/package.json`. Adding it changes the lockfile.

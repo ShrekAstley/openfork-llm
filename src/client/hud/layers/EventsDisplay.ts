@@ -53,6 +53,7 @@ const TIER_1_TYPES: ReadonlySet<MessageType> = new Set([
   MessageType.RENEW_ALLIANCE,
   MessageType.CONQUERED_PLAYER,
   MessageType.CHAT,
+  MessageType.DIPLOMATIC_MESSAGE,
   MessageType.DONATION_RECEIVED,
 ]);
 
@@ -299,7 +300,9 @@ export class EventsDisplay extends LitElement implements Controller {
       createdAt: this.game.ticks(),
       highlight: true,
       type: event.messageType,
-      unsafeDescription: true,
+      // The text of a diplomatic message is free-form, so it renders as
+      // plain text, never as HTML.
+      unsafeDescription: event.messageType !== MessageType.DIPLOMATIC_MESSAGE,
       unitView: unitView,
       focusID: event.focusPlayerID,
     });

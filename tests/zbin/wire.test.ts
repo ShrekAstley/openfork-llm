@@ -107,6 +107,18 @@ const SAMPLE_INTENTS: StampedIntent[] = [
     quickChatKey: "help.troops",
     target: P3,
   },
+  {
+    type: "diplomatic_message",
+    clientID: "BRAIN000",
+    recipient: P2,
+    text: "Let us talk peace, héros ✌",
+  },
+  {
+    type: "diplomatic_message",
+    clientID: "BRAIN000",
+    recipient: "AllPlayers",
+    text: "To all: hold your borders.",
+  },
   { type: "toggle_pause", clientID: ADMIN_BOT_CLIENT_ID, paused: true },
   {
     type: "update_game_config",

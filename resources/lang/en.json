@@ -782,6 +782,7 @@
     "betrayal_description": "You broke your alliance with {name}, making you a TRAITOR ({malusPercent}% defense debuff for {durationText})",
     "betrayed_you": "{name} broke their alliance with you",
     "conquered_no_gold": "Conquered {name} (didn't play, no gold awarded)",
+    "diplomatic_message": "{name}: {text}",
     "duration_second": "1 second",
     "duration_seconds_plural": "{seconds} seconds",
     "focus": "Focus",

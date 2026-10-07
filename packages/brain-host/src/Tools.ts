@@ -48,7 +48,7 @@ const TOOLS = {
     z.object({ target, emoji: z.enum(flattenedEmojiTable) }),
   ],
   send_message: [
-    "Send a short diplomatic message (recorded by the Brain Host only).",
+    "Send a short diplomatic message. Every player can read it, so put nothing secret in it.",
     z.object({ target, text: z.string().min(1).max(200) }),
   ],
 } as const satisfies Record<string, readonly [string, z.ZodType]>;

@@ -1,4 +1,5 @@
 import {
+  AllPlayers,
   GameMapSize,
   GameMapType,
   GameType,
@@ -8,6 +9,7 @@ import {
   brainClientID,
   GameStartInfo,
   Intent,
+  MAX_DIPLOMATIC_MESSAGE_LENGTH,
 } from "@openfront/engine-api/Schemas";
 import { createGameRunner, GameRunner } from "@openfront/engine/GameRunner";
 import { loadMapFiles } from "@openfront/shared/GameMapLoader";
@@ -144,6 +146,52 @@ describe("Brain Host intents", () => {
     expect(pub.handleBrainIntent("Atlantis", attack).status).toBe(403);
   });
 
+  it("takes a diplomatic message from a brain, bounded in length", () => {
+    const { game } = brainGame(["Atlantis"]);
+    startGame(game);
+    const say = (text: string): Intent => ({
+      type: "diplomatic_message",
+      recipient: "AllPlayers",
+      text,
+    });
+    expect(game.handleBrainIntent("Atlantis", say("hello")).status).toBe(200);
+    expect(game.handleBrainIntent("Lemuria", say("hello")).status).toBe(403);
+    // A player's own socket is turned away (authorizeIntent table covers more).
+    expect(
+      game.handleIntent(say("hello"), {
+        clientID: HUMAN,
+        isLobbyCreator: true,
+        isAdmin: false,
+        isAdminBot: false,
+      }).status,
+    ).toBe(403);
+  });
+
+  it("rejects an over-long diplomatic message at the route", async () => {
+    const { game } = brainGame(["Atlantis"]);
+    startGame(game);
+    const target = {
+      serverUrl: "http://x",
+      adminKey: "k",
+      gameID: GAME_ID,
+      nation: "Atlantis",
+      fetch: fetchInto(game),
+    };
+    const say = (text: string) =>
+      ({ type: "diplomatic_message", recipient: AllPlayers, text }) as Intent;
+    await expect(
+      submitEngineIntent(
+        target,
+        say("x".repeat(MAX_DIPLOMATIC_MESSAGE_LENGTH + 1)),
+      ),
+    ).rejects.toThrow(/400/);
+    await expect(submitEngineIntent(target, say(""))).rejects.toThrow(/400/);
+    await submitEngineIntent(
+      target,
+      say("x".repeat(MAX_DIPLOMATIC_MESSAGE_LENGTH)),
+    );
+  });
+
   it("rejects a malformed intent at the route", async () => {
     const { game } = brainGame(["Atlantis"]);
     startGame(game);
@@ -180,15 +228,54 @@ describe("Brain Host intents", () => {
         id,
       ),
     ).toEqual([{ type: "donate_gold", recipient: "b0000000", gold: 5 }]);
-    // No engine twin: Brain Host state only.
+    // Messages: a display-only engine intent, to one player or to everyone.
     expect(
       toEngineIntent(
         {
           type: "SEND_DIPLOMATIC_MESSAGE",
           target: "b",
-          text: "hi",
+          text: " hi ",
           channel: "private",
         },
+        id,
+      ),
+    ).toEqual([
+      { type: "diplomatic_message", recipient: "b0000000", text: "hi" },
+    ]);
+    expect(
+      toEngineIntent(
+        { type: "SEND_DIPLOMATIC_MESSAGE", text: "all", channel: "public" },
+        id,
+      ),
+    ).toEqual([
+      { type: "diplomatic_message", recipient: AllPlayers, text: "all" },
+    ]);
+    // Over the engine's bound: cut, never split a surrogate pair.
+    const cut = toEngineIntent(
+      {
+        type: "SEND_DIPLOMATIC_MESSAGE",
+        text: "x".repeat(MAX_DIPLOMATIC_MESSAGE_LENGTH - 1) + "😀",
+        channel: "public",
+      },
+      id,
+    )[0] as { text: string };
+    expect(cut.text).toBe("x".repeat(MAX_DIPLOMATIC_MESSAGE_LENGTH - 1));
+    expect(
+      toEngineIntent(
+        { type: "SEND_DIPLOMATIC_MESSAGE", text: "   ", channel: "public" },
+        id,
+      ),
+    ).toEqual([]);
+    // Treaties have no engine twin: Brain Host state only.
+    expect(
+      toEngineIntent(
+        {
+          type: "PROPOSE_TREATY",
+          target: "b",
+          treatyType: "non_aggression",
+          terms: {},
+          secret: true,
+        } as any,
         id,
       ),
     ).toEqual([]);

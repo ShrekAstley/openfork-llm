@@ -13,6 +13,7 @@ import { BoatRetreatExecution } from "@openfront/engine/execution/BoatRetreatExe
 import { CityExecution } from "@openfront/engine/execution/CityExecution";
 import { DefensePostExecution } from "@openfront/engine/execution/DefensePostExecution";
 import { DeleteUnitExecution } from "@openfront/engine/execution/DeleteUnitExecution";
+import { DiplomaticMessageExecution } from "@openfront/engine/execution/DiplomaticMessageExecution";
 import { DonateGoldExecution } from "@openfront/engine/execution/DonateGoldExecution";
 import { DonateTroopsExecution } from "@openfront/engine/execution/DonateTroopExecution";
 import { EmbargoAllExecution } from "@openfront/engine/execution/EmbargoAllExecution";
@@ -154,6 +155,8 @@ describe("basic execution snapshots", () => {
         new EmojiExecution(c, "nobody", 3),
         new QuickChatExecution(a, b.id(), "greet.hello", c.id()),
         new QuickChatExecution(b, a.id(), "greet.hello", undefined),
+        new DiplomaticMessageExecution(a, b.id(), "hello"),
+        new DiplomaticMessageExecution(c, AllPlayers, "to all"),
         new EmbargoExecution(a, c.id(), "start"),
         new EmbargoExecution(a, "nobody", "stop"),
         new EmbargoAllExecution(b, "start"),
