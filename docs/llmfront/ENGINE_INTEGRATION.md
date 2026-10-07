@@ -102,6 +102,14 @@ Empires talk through the `DiplomacyManager`; nothing is delivered directly betwe
 - **Proposal lifetime.** `DiplomacyManager.proposalTtl` (set by `BrainRuntime` to `3 * decisionIntervalSeconds + maxDecisionAgeSeconds`, DM turns are simulated seconds) keeps a proposal open across several cycles. The library default (5 turns) is unchanged elsewhere.
 - **Personality** is prompt text only (`PERSONALITY & DIRECTIVES`); no code branches on it. `tests/server/BrainConversation.test.ts` covers the round trip, negotiation to treaty, a stale reply, and LLM offline, all with `MockProvider`.
 
+## Save and resume
+
+`npm run brain:run -- --game <id> [--state brain.state.json] [--resume] [--save-every 15]` writes one JSON file (`BrainState.ts`, version 1) every 15 s and on Ctrl-C, through a temp file and a rename. `--resume` loads it before the first step; a missing, unparsable, wrong-version or invalid file stops the process with a readable error.
+- **Saved:** the `DiplomacyManager` state (the existing `snapshot()`), each brain's bounded memory (events, rejections, decisions, inbox, revision), what its last step saw on the replica (so a resume raises no false "alliance formed" events), and its `DecisionScheduler` cursors (`next`, `pending`).
+- **Not saved:** the game (the replica replays the server's turn log from turn 0 on resume), requests in flight (a decision in flight at the crash is lost; the scheduler's cursor has already moved on, so the next one comes a period later, and unanswered messages stay in the inbox), config and credentials.
+- **Game check:** the file holds the game id. A file for another game stops the run (`ResumeMismatchError`, not retried), and nothing is saved over it.
+- Tests: `tests/server/BrainState.test.ts` (file round trip, resume mid-conversation with an unanswered message, mismatch, scheduler).
+
 ## Open questions
 
 1. Should `brainNations` be host-editable from the lobby UI? It isn't in `ConfigPatch.COPIED_KEYS` yet, so only admin-bot `create_game` can set it.

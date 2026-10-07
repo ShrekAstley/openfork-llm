@@ -4,6 +4,7 @@
 // nothing (the nation keeps doing whatever its last orders set in motion).
 import type { Intent } from "@openfront/engine-api/Schemas";
 import type { Game, Player } from "@openfront/engine/game/Game";
+import { type EmpireBrainState } from "./BrainState";
 import { DecisionScheduler, Importance } from "./DecisionScheduler";
 import type { DiplomacyManager } from "./diplomacy/DiplomacyManager";
 import { MAX_MESSAGES } from "./diplomacy/DiplomacyManager";
@@ -85,6 +86,54 @@ export class EmpireBrain {
 
   constructor(readonly o: EmpireBrainOptions) {
     this.scheduler = new DecisionScheduler(o.intervalTicks);
+  }
+
+  /** Plain JSON data; an in-flight request is not part of it. */
+  snapshot(): EmpireBrainState {
+    return {
+      revision: this.revision,
+      events: [...this.events],
+      rejected: [...this.rejected],
+      history: this.history.map((d) => ({
+        ...d,
+        actions: [...d.actions],
+        rejected: [...d.rejected],
+      })),
+      inbox: this.inbox.map((m) => ({ ...m })),
+      scheduler: this.scheduler.snapshot(),
+      seen: {
+        messages: [...this.seenMessages],
+        treaties: [...this.seenTreaties],
+        attackers: [...this.attackers],
+        attackIds: [...this.attackIds],
+        outgoingIds: [...this.outgoingIds],
+        requestors: [...this.requestors],
+        allies: [...this.allies],
+        embargoers: [...this.embargoers],
+        tilesAtDecision: this.tilesAtDecision,
+        territoryNoted: this.territoryNoted,
+      },
+    };
+  }
+
+  restore(s: EmpireBrainState): void {
+    this.revision = s.revision;
+    this.events = [...s.events];
+    this.rejected = [...s.rejected];
+    this.history = s.history.map((d) => ({ ...d }));
+    this.inbox = s.inbox.map((m) => ({ ...m }));
+    this.scheduler.restore(s.scheduler);
+    this.seenMessages = new Set(s.seen.messages);
+    this.seenTreaties = new Set(s.seen.treaties);
+    this.attackers = new Set(s.seen.attackers);
+    this.attackIds = new Set(s.seen.attackIds);
+    this.outgoingIds = new Set(s.seen.outgoingIds);
+    this.requestors = new Set(s.seen.requestors);
+    this.allies = new Set(s.seen.allies);
+    this.embargoers = new Set(s.seen.embargoers);
+    this.tilesAtDecision = s.seen.tilesAtDecision;
+    this.territoryNoted = s.seen.territoryNoted;
+    this.busy = false;
   }
 
   me(game: Game): Player | undefined {

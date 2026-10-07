@@ -14,6 +14,15 @@ export class DecisionScheduler {
 
   constructor(private intervalTicks: number) {}
 
+  snapshot(): { next: number; pending: number | null } {
+    return { next: this.next, pending: this.pending };
+  }
+
+  restore(s: { next: number; pending: number | null }): void {
+    this.next = s.next;
+    this.pending = s.pending;
+  }
+
   notify(i: Importance): void {
     this.pending = Math.max(this.pending ?? i, i);
   }

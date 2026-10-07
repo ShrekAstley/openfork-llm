@@ -1,143 +1,22 @@
-import { GameMapSize } from "@openfront/engine-api/game/GameTypes";
-import { brainClientID, Turn } from "@openfront/engine-api/Schemas";
-import { createGameWireContext } from "@openfront/shared/ZbinWire";
+import { brainClientID } from "@openfront/engine-api/Schemas";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BrainConfigSchema } from "../../packages/brain-host/src/BrainConfig";
-import { BrainRuntime } from "../../packages/brain-host/src/BrainRuntime";
-import { MockProvider } from "../../packages/brain-host/src/MockProvider";
-import type {
-  ChatRequest,
-  ChatResult,
-  Result,
-  ToolCall,
-} from "../../packages/brain-host/src/types";
+import type { ChatResult, Result } from "../../packages/brain-host/src/types";
 import { ServerEnv } from "../../src/server/ServerEnv";
-import { fetchInto } from "../util/BrainHarness";
 import {
-  cid,
-  makeClient,
-  makeGame,
-  mockWsOf,
-  startGame,
-} from "../util/GameServerHarness";
-import { TestDataMapLoader } from "../util/ScriptedGame";
+  CA,
+  callsOf,
+  liveDuoGame as liveGame,
+  ok,
+  plan,
+  prompt,
+  say,
+  US,
+  who,
+} from "../util/BrainHarness";
 
 // Two brain nations talk to each other through the DiplomacyManager, each
 // answering on its own decision cycles, driven by a scripted MockProvider.
 // No real model is involved.
-
-const US = "United States";
-const CA = "Canada";
-const ok = MockProvider.tools;
-const plan: ToolCall = {
-  name: "plan",
-  arguments: { objective: "talk", summary: "diplomacy" },
-};
-const say = (target: string, text: string): ToolCall => ({
-  name: "send_message",
-  arguments: { target, text },
-});
-
-/** The empire a request is for, read off its observation. */
-const who = (req: ChatRequest) =>
-  /^You are ([^.]+)\./.exec(req.messages[1].content)![1];
-const prompt = (req: ChatRequest) => req.messages[1].content;
-const callsOf = (p: MockProvider, empire: string) =>
-  p.calls.filter((c) => who(c) === empire);
-
-type Respond = (
-  req: ChatRequest,
-  n: number,
-) => Result<ChatResult> | Promise<Result<ChatResult>>;
-
-async function liveGame(respond: Respond, over: Record<string, unknown> = {}) {
-  const provider = new MockProvider(respond);
-  const game = makeGame({
-    id: cid("brconv"),
-    config: {
-      gameMapSize: GameMapSize.Compact,
-      nations: "default",
-      bots: 0,
-      brainNations: [US, CA],
-    },
-  });
-  const human = makeClient({ clientID: cid("human"), username: "human" });
-  game.joinClient(human);
-  const logs: string[] = [];
-  const rt = new BrainRuntime({
-    config: BrainConfigSchema.parse({
-      decisionIntervalSeconds: 1,
-      maxConcurrentRequests: 2,
-      ...over,
-    }),
-    provider,
-    server: {
-      serverUrl: "http://in-process",
-      adminKey: "k",
-      gameID: cid("brconv"),
-      fetch: fetchInto(game),
-    },
-    maps: new TestDataMapLoader("world"),
-    log: (l) => logs.push(l),
-  });
-  startGame(game);
-  const players = (
-    mockWsOf(human)
-      .sent()
-      .find((m) => m.type === "start") as any
-  ).gameStartInfo.players;
-  // One turn per step; waits for every decision in flight.
-  const tick = async (n: number) => {
-    for (let i = 0; i < n; i++) {
-      vi.advanceTimersByTime(100);
-      await rt.step();
-      await rt.settled();
-    }
-  };
-  // Like tick, but never waits on a decision a test is holding back.
-  const tickNoWait = async (n: number) => {
-    for (let i = 0; i < n; i++) {
-      vi.advanceTimersByTime(100);
-      await rt.step();
-    }
-  };
-  const until = async (done: () => boolean, max = 600) => {
-    for (let i = 0; i < max && !done(); i++) await tick(1);
-    expect(done()).toBe(true);
-  };
-  // Until the replica is out of the spawn phase (brains don't decide before).
-  const pastSpawn = async () => {
-    for (
-      let i = 0;
-      i < 1000 && (!rt.runner || rt.runner.game.inSpawnPhase());
-      i++
-    )
-      await tick(1);
-  };
-  const recorded = () =>
-    mockWsOf(human)
-      .sent(createGameWireContext(players))
-      .flatMap((m) => (m.type === "turn" ? ([m.turn] as Turn[]) : []))
-      .flatMap((t) => t.intents);
-  const idOf = (name: string) =>
-    rt
-      .runner!.game.players()
-      .find((p) => p.name() === name)!
-      .id();
-  const brain = (name: string) => rt.brains.find((b) => b.o.name === name)!;
-  return {
-    rt,
-    provider,
-    logs,
-    tick,
-    tickNoWait,
-    until,
-    pastSpawn,
-    recorded,
-    idOf,
-    brain,
-  };
-}
 
 describe("Brain Host conversation", () => {
   beforeEach(() => {
