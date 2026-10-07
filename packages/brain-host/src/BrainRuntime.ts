@@ -54,6 +54,12 @@ export class BrainRuntime {
   }
 
   private async init(start: GameStartInfo) {
+    // A proposal outlives a few decision cycles plus the age an answer may
+    // have, so its recipient can reply on a later cycle.
+    this.dm.proposalTtl = Math.ceil(
+      3 * this.o.config.decisionIntervalSeconds +
+        this.o.config.maxDecisionAgeSeconds,
+    );
     const { gameMap, gameMapSize } = start.config;
     this.runner = await createGameRunner(
       start,

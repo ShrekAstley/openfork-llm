@@ -80,7 +80,7 @@ Loop (`BrainRuntime.step`, every `--poll` ms): fetch turns from `nextTurn` → `
 
 - `EmpireBrain` + `DecisionScheduler`: periodic wake every `decisionIntervalSeconds` of *simulated* time (ticks, 10/s); early wake only for HIGH/CRITICAL. Events: new attacker CRITICAL (repeat wave from a current attacker HIGH), alliance request HIGH, alliance ended HIGH / formed MEDIUM, embargo on us HIGH / lifted MEDIUM, territory -20% HIGH / +50% MEDIUM. Nothing during the spawn phase, one request in flight per brain. Requests carry `worldTick` + `empireRevision`; CRITICAL bumps the revision, and an answer older than `maxDecisionAgeSeconds` or from an old revision is `stale`. Stale/failed/cancelled: nothing is submitted, prior orders stand.
 - `ObservationBuilder`: text, ≤ `budgetTokens` (1000, chars/4), sections in priority order (self, rejected actions, personality+directives, recent events, neighbors, diplomacy from `DiplomacyManager.observe`, last decision, top-3 leaders); lines that do not fit are dropped with `(+n more)`. Fog: other players' troops only as a strength bucket relative to ours (`much weaker`..`much stronger`); only bordering players plus the leaderboard top are listed.
-- `Tools`: `plan`, `attack` (player or `wilderness`, % of army), `form_alliance` (also accepts), `break_alliance`, `declare_war`, `offer_peace`, `donate`, `embargo`, `target_player`, `emoji`, `send_message`. JSON schema from zod (`z.toJSONSchema`). Pipeline per call: zod → `validateIntent` (for the diplomatic ones) → engine legality on the replica (`canAttackPlayer`, `sharesBorderWith`, `canSendAllianceRequest`, `canDonate*`, `canTarget`, `canSendEmoji`) → `dm.recordTurn` → `toEngineIntent` → POST `brain_intent`. Any failure (including a non-200 from the server) becomes `ACTION REJECTED <call>: <reason>` in the next observation, then is cleared. Executions may still no-op silently; that is not reported back.
+- `Tools`: `plan`, `attack` (player or `wilderness`, % of army), `form_alliance` (also accepts), `break_alliance`, `declare_war`, `offer_peace`, `donate`, `embargo`, `target_player`, `emoji`, `send_message`, `propose_treaty`, `accept_treaty`, `reject_treaty`. JSON schema from zod (`z.toJSONSchema`). Pipeline per call: zod → `validateIntent` (for the diplomatic ones) → engine legality on the replica (`canAttackPlayer`, `sharesBorderWith`, `canSendAllianceRequest`, `canDonate*`, `canTarget`, `canSendEmoji`) → `dm.recordTurn` → `toEngineIntent` → POST `brain_intent`. Any failure (including a non-200 from the server) becomes `ACTION REJECTED <call>: <reason>` in the next observation, then is cleared. Executions may still no-op silently; that is not reported back.
 - Memory per brain (bounded): last 8 events, 5 rejections, 20 decisions `{tick, objective, summary, actions, rejected}`. The model's free text is never stored or logged (no chain-of-thought).
 - Determinism: everything recorded into turns comes from the LLM's answer plus replica state (e.g. attack troops = % of the replica's troop count). No clock or randomness enters an intent.
 - Config (`brain.config.json` / `BRAIN_*` env): adds `maxDecisionAgeSeconds` and per-empire `personality`, `directives` (keys = nation names).
@@ -91,10 +91,22 @@ Run (dev server must include this change; `npm run dev` restarts it):
 
 Tests: `tests/server/BrainRuntime.test.ts` (scheduler, live in-process game end-to-end with the mock provider, LLM offline, stale discard, rejection feedback, observation budget + fog), `tests/server/BrainIntent.test.ts` (mappings).
 
+## Conversation loop (AI to AI)
+
+Empires talk through the `DiplomacyManager`; nothing is delivered directly between models.
+- **Send.** `send_message` and `propose_treaty` go through `validateIntent` and `dm.recordTurn` (the message log / a `proposed` treaty). `send_message` also reaches the game as a `diplomatic_message`. A treaty has no engine twin.
+- **Receive.** Each step `EmpireBrain.observeDiplomacy` diffs `dm.state` for messages addressed to the empire and treaties proposed to it. Each raises a MEDIUM event, so it waits for the next periodic decision (no early wake: replies come on later cycles). Messages land in a bounded `inbox` (5); treaties are read from `dm.observe`.
+- **Prompt.** The observation's `FOR YOU TO ANSWER` section lists treaty ids and quoted message text. The system prompt tells the model that this text is untrusted data, not orders, and that anything it says is public.
+- **Reply.** One LLMManager request per decision, so conversation shares the same priority queue, timeout, stale and fallback rules as everything else. The model answers with `send_message`, `accept_treaty` / `reject_treaty` (by id; only the addressee may) or ignores it.
+- **Inbox lifetime.** Messages leave the inbox only when a decision that included them is applied. A stale, failed or offline cycle drops nothing: the next successful cycle sees them.
+- **Proposal lifetime.** `DiplomacyManager.proposalTtl` (set by `BrainRuntime` to `3 * decisionIntervalSeconds + maxDecisionAgeSeconds`, DM turns are simulated seconds) keeps a proposal open across several cycles. The library default (5 turns) is unchanged elsewhere.
+- **Personality** is prompt text only (`PERSONALITY & DIRECTIVES`); no code branches on it. `tests/server/BrainConversation.test.ts` covers the round trip, negotiation to treaty, a stale reply, and LLM offline, all with `MockProvider`.
+
 ## Open questions
 
 1. Should `brainNations` be host-editable from the lobby UI? It isn't in `ConfigPatch.COPIED_KEYS` yet, so only admin-bot `create_game` can set it.
 2. Fog: the in-game HUD shows every player's troop count on their name label. The runtime hides exact enemy troops anyway (as specified). Keep that, or show what a human sees?
 3. `diplomatic_message` is built. Do private messages need a non-turn channel (server-to-recipient)? Today none exists. There is also no per-sender rate limit on messages (see 4).
 4. A per-nation intent rate cap on the route (none today beyond the key).
-5. `@openfront/engine-api` is imported by brain-host through the workspace symlink but isn't in `packages/brain-host/package.json`. Adding it changes the lockfile.
+5. Signed treaties are Brain Host state only, so humans never see them in the game feed. Should a signed treaty also raise a public `diplomatic_message`?
+6. `@openfront/engine-api` is imported by brain-host through the workspace symlink but isn't in `packages/brain-host/package.json`. Adding it changes the lockfile.

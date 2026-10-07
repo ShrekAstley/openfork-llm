@@ -12,6 +12,7 @@ import type { Game, Player } from "@openfront/engine/game/Game";
 import { z } from "zod";
 import type { DiplomacyManager } from "./diplomacy/DiplomacyManager";
 import { type DiplomaticIntent, validateIntent } from "./diplomacy/intents";
+import { TREATY_TYPES } from "./diplomacy/schemas";
 import { toEngineIntent } from "./EngineBridge";
 import type { ToolCall, ToolDef } from "./types";
 
@@ -50,6 +51,27 @@ const TOOLS = {
   send_message: [
     "Send a short diplomatic message. Every player can read it, so put nothing secret in it.",
     z.object({ target, text: z.string().min(1).max(200) }),
+  ],
+  propose_treaty: [
+    "Propose a treaty to a player. They answer on one of their later turns; it only binds you both once accepted. Use offer_peace for ending a war.",
+    z.object({
+      target,
+      treatyType: z.enum(
+        TREATY_TYPES.filter((t) => t !== "peace" && t !== "ceasefire") as [
+          string,
+          ...string[],
+        ],
+      ),
+      durationSeconds: z.number().int().min(10).max(3600).optional(),
+    }),
+  ],
+  accept_treaty: [
+    "Accept a treaty proposed to you, by its id (see FOR YOU TO ANSWER).",
+    z.object({ treatyId: z.string().min(1).max(32) }),
+  ],
+  reject_treaty: [
+    "Reject a treaty proposed to you, by its id.",
+    z.object({ treatyId: z.string().min(1).max(32) }),
   ],
 } as const satisfies Record<string, readonly [string, z.ZodType]>;
 export type ToolName = keyof typeof TOOLS;
@@ -98,6 +120,22 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
     return { kind: "plan", objective: a.objective, summary: a.summary };
 
   const { game, me } = c;
+
+  // Answering a treaty names it by id, not by player.
+  if (call.name === "accept_treaty" || call.name === "reject_treaty") {
+    const dip: DiplomaticIntent = {
+      type: call.name === "accept_treaty" ? "ACCEPT_TREATY" : "REJECT_TREATY",
+      treatyId: a.treatyId,
+    };
+    const v = validateIntent(c.dm.state, me.name(), dip);
+    if (!v.ok)
+      return no(
+        `${v.reason}${Object.keys(v.details).length ? " " + JSON.stringify(v.details) : ""}`,
+      );
+    c.dm.recordTurn(c.turn, me.name(), [dip]);
+    return { kind: "act", label, engine: [] };
+  }
+
   const wild = String(a.target).toLowerCase() === "wilderness";
   const all = call.name === "emoji" && String(a.target).toLowerCase() === "all";
   const p =
@@ -136,6 +174,18 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
         target: p!.name(),
         resource: a.resource,
         amount: a.amount,
+      };
+      break;
+    case "propose_treaty":
+      dip = {
+        type: "PROPOSE_TREATY",
+        target: p!.name(),
+        treatyType: a.treatyType,
+        terms:
+          a.durationSeconds === undefined
+            ? {}
+            : { duration_turns: a.durationSeconds },
+        secret: false,
       };
       break;
     case "send_message":
