@@ -192,6 +192,15 @@ describe("Brain Host intents", () => {
     );
   });
 
+  it("serves no turn feed during the prestart countdown", () => {
+    const { game } = brainGame(["Atlantis"]);
+    expect(game.recordedTurns(0, 10)).toBeNull();
+    game.prestart();
+    expect(game.recordedTurns(0, 10)).toBeNull();
+    startGame(game);
+    expect(game.recordedTurns(0, 10)?.gameStartInfo.gameID).toBe(GAME_ID);
+  });
+
   it("rejects a malformed intent at the route", async () => {
     const { game } = brainGame(["Atlantis"]);
     startGame(game);

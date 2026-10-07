@@ -507,12 +507,12 @@ export class GameServer {
 
   // The Brain Host's observation feed: what the winner replay runs on (start
   // info + turn log), from turn `from` on, at most `max` turns. Null before
-  // start. Read-only.
+  // start (the prestart countdown has no start info yet). Read-only.
   public recordedTurns(
     from: number,
     max: number,
   ): { gameStartInfo: WireGameStartInfo; turns: Turn[] } | null {
-    if (!this.hasStarted()) return null;
+    if (this.stage !== "started") return null;
     return {
       gameStartInfo: this.wireGameStartInfo,
       turns: this.turns.slice(from, from + max),
