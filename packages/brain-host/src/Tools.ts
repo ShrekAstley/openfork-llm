@@ -96,13 +96,22 @@ const NO_REASON = new Set([
   "reject_treaty",
 ]);
 
-export const toolDefs = (): ToolDef[] =>
-  Object.entries(TOOLS).map(([name, [description, schema]]) => {
-    const parameters = z.toJSONSchema(schema) as Record<string, any>;
-    if (!NO_REASON.has(name))
-      parameters.properties = { ...parameters.properties, reason: REASON };
-    return { name, description, parameters };
-  });
+/** Tools that only make sense while a treaty is waiting for an answer. */
+const ANSWER_TOOLS = new Set(["accept_treaty", "reject_treaty"]);
+
+/**
+ * The tools to offer now. A small model picks better from a short list, and
+ * cannot invent treaty ids to answer when none is pending.
+ */
+export const toolDefs = (o: { treatyPending?: boolean } = {}): ToolDef[] =>
+  Object.entries(TOOLS)
+    .filter(([name]) => o.treatyPending !== false || !ANSWER_TOOLS.has(name))
+    .map(([name, [description, schema]]) => {
+      const parameters = z.toJSONSchema(schema) as Record<string, any>;
+      if (!NO_REASON.has(name))
+        parameters.properties = { ...parameters.properties, reason: REASON };
+      return { name, description, parameters };
+    });
 
 export type Action =
   | { kind: "plan"; objective: string; summary: string }

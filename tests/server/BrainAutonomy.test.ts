@@ -110,6 +110,31 @@ describe("decision log", () => {
   });
 });
 
+describe("message flood", () => {
+  it("lets a decision send two messages and rejects the rest", async () => {
+    const file = path.join(dir, "d.jsonl");
+    const g = await liveDuoGame(
+      (req) =>
+        who(req) === US
+          ? ok([
+              plan("talk", "chatty"),
+              say(CA, "one"),
+              say(CA, "two"),
+              say(CA, "three"),
+            ])
+          : ok([plan("wait", "w")]),
+      { decisionLog: file },
+    );
+    await g.until(() => readDecisionLog(file).some((r) => r.empire === US));
+    const r = readDecisionLog(file).find((x) => x.empire === US)!;
+    expect(r.actions).toHaveLength(2);
+    expect(r.rejected).toEqual([
+      expect.stringContaining("at most 2 messages per decision"),
+    ]);
+    expect(r.result).toBe("partly_applied");
+  });
+});
+
 describe("empire memory and personality", () => {
   it("shows traits and ranked memories; notes persist in the saved state", async () => {
     let n = 0;

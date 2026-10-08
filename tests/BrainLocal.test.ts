@@ -493,3 +493,17 @@ describe("DecisionLog", () => {
     ).not.toThrow();
   });
 });
+
+describe("tool list", () => {
+  test("treaty answers are offered only while a treaty is pending", () => {
+    const names = (o?: { treatyPending?: boolean }) =>
+      toolDefs(o).map((t) => t.name);
+    expect(names()).toContain("accept_treaty");
+    expect(names({ treatyPending: true })).toContain("reject_treaty");
+    const none = names({ treatyPending: false });
+    expect(none).not.toContain("accept_treaty");
+    expect(none).not.toContain("reject_treaty");
+    expect(none).toContain("attack");
+    expect(none).toContain("send_message");
+  });
+});

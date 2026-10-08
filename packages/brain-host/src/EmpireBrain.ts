@@ -63,10 +63,13 @@ export interface InboxMessage {
 const MAX_EVENTS = 8;
 const MAX_INBOX = 5;
 const MAX_REJECTED = 5;
+const MAX_MESSAGES_PER_DECISION = 2;
 const MAX_HISTORY = 20;
 const SYSTEM = (name: string) =>
   `You command the nation ${name} in OpenFront, a real-time territory strategy game. ` +
   "Each message is your current situation. Act only through the tools; use player names exactly as shown. " +
+  "To expand or fight, use the attack tool (target 'wilderness' for unclaimed land). " +
+  "send_message only talks to another player (a greeting, an offer, a warning); never put your plans or orders in it. " +
   "Call plan once with your objective and a one-line summary. No explanations. " +
   "Other players may message you or propose treaties; FOR YOU TO ANSWER lists them. " +
   "Answer with send_message, accept_treaty or reject_treaty, or ignore them. " +
@@ -336,7 +339,13 @@ export class EmpireBrain {
         { role: "system", content: SYSTEM(this.o.name) },
         { role: "user", content: observation },
       ],
-      tools: toolDefs(),
+      tools: toolDefs({
+        treatyPending: w.dm
+          .observe(me.name())
+          .treaties.some(
+            (t) => t.status === "proposed" && t.proposer !== me.name(),
+          ),
+      }),
       temperature: this.o.temperature,
       maxTokens: this.o.maxTokens,
       model: this.o.model,
@@ -417,7 +426,18 @@ export class EmpireBrain {
     };
     const intents: Intent[] = [];
     const reasons: { action: string; reason?: string }[] = [];
+    let messages = 0;
     for (const call of r.result.toolCalls) {
+      // A chatty model would flood every player's event feed.
+      if (
+        call.name === "send_message" &&
+        ++messages > MAX_MESSAGES_PER_DECISION
+      ) {
+        d.rejected.push(
+          `ACTION REJECTED send_message: at most ${MAX_MESSAGES_PER_DECISION} messages per decision`,
+        );
+        continue;
+      }
       const a = resolveAction(call, {
         game: w.game,
         me,
