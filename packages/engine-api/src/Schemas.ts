@@ -38,6 +38,7 @@ export type Intent =
   | BuildUnitIntent
   | EmbargoIntent
   | QuickChatIntent
+  | DiplomaticMessageIntent
   | MoveWarshipIntent
   | MarkDisconnectedIntent
   | EmbargoAllIntent
@@ -68,6 +69,9 @@ export type UpgradeStructureIntent = z.infer<
 >;
 export type MoveWarshipIntent = z.infer<typeof MoveWarshipIntentSchema>;
 export type QuickChatIntent = z.infer<typeof QuickChatIntentSchema>;
+export type DiplomaticMessageIntent = z.infer<
+  typeof DiplomaticMessageIntentSchema
+>;
 export type MarkDisconnectedIntent = z.infer<
   typeof MarkDisconnectedIntentSchema
 >;
@@ -511,6 +515,20 @@ export const QuickChatIntentSchema = z.object({
   target: MappedID.optional(),
 });
 
+// Longest free-text diplomatic message, in UTF-16 code units.
+export const MAX_DIPLOMATIC_MESSAGE_LENGTH = 200;
+
+// Display-only free text from a brain-controlled nation (Brain Host). It
+// changes no game state. Anything in a turn reaches every client, so even a
+// message addressed to one recipient is readable by all of them.
+export const DiplomaticMessageIntentSchema = z.object({
+  type: z.literal("diplomatic_message"),
+  recipient: zb.union([MappedID, z.literal(AllPlayers)], {
+    select: (v) => (v === AllPlayers ? 1 : 0),
+  }),
+  text: zb.string({ min: 1, max: MAX_DIPLOMATIC_MESSAGE_LENGTH }),
+});
+
 // Server-internal (rejected from clients). The player being marked is the
 // intent's own sender, so the target rides the stamped `clientID` that
 // StampedIntentSchema adds to every intent — declaring it here too would
@@ -565,6 +583,7 @@ export const IntentSchema = z.discriminatedUnion("type", [
   EmbargoAllIntentSchema,
   MoveWarshipIntentSchema,
   QuickChatIntentSchema,
+  DiplomaticMessageIntentSchema,
   AllianceExtensionIntentSchema,
   DeleteUnitIntentSchema,
   KickPlayerIntentSchema,

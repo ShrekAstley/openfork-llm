@@ -15,6 +15,52 @@ export function sliderToNationsConfig(
 }
 
 /**
+ * The `nations` config for a lobby with LLM-controlled nations. The slider
+ * counts ordinary AI nations; the engine keeps the LLM ones in any numeric
+ * count, so they are added on top. At the default (every map nation) the
+ * LLM nations are already among them.
+ */
+export function nationsWithBrains(
+  sliderValue: number,
+  defaultNationCount: number,
+  brainCount: number,
+): GameConfig["nations"] {
+  if (brainCount === 0)
+    return sliderToNationsConfig(sliderValue, defaultNationCount);
+  if (sliderValue === defaultNationCount && sliderValue > 0) return "default";
+  return Math.min(400, sliderValue + brainCount);
+}
+
+/**
+ * Which map nations the LLM controls. Typed names win (matched to the map's
+ * own spelling; the rest are reported as unknown); otherwise the first
+ * `count` nations of the map.
+ */
+export function resolveBrainNations(
+  count: number,
+  namesText: string,
+  mapNames: string[],
+): { names: string[]; unknown: string[] } {
+  const typed = namesText
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  if (typed.length === 0)
+    return {
+      names: mapNames.slice(0, Math.max(0, Math.min(32, Math.floor(count)))),
+      unknown: [],
+    };
+  const names: string[] = [];
+  const unknown: string[] = [];
+  for (const want of typed) {
+    const found = mapNames.find((n) => n.toLowerCase() === want.toLowerCase());
+    if (!found) unknown.push(want);
+    else if (!names.includes(found)) names.push(found);
+  }
+  return { names: names.slice(0, 32), unknown };
+}
+
+/**
  * Maps a nations config value to a slider-friendly number.
  * "disabled" → 0, "default" → defaultNationCount, number → number.
  */

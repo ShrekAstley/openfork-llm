@@ -25,6 +25,8 @@ export interface ChatRequest {
   signal?: AbortSignal;
   /** Overrides the provider's default model (per-empire override). */
   model?: string;
+  /** Overrides the provider's default timeout (per-model profile). */
+  timeoutMs?: number;
 }
 
 export interface ChatResult {
@@ -51,4 +53,6 @@ export type Result<T> = { ok: true; value: T } | { ok: false; error: LLMError };
 export interface LLMProvider {
   chat(req: ChatRequest): Promise<Result<ChatResult>>;
   listModels(): Promise<Result<string[]>>;
+  /** Free the model's memory where the backend allows it. Optional. */
+  unload?(model: string): Promise<Result<void>>;
 }

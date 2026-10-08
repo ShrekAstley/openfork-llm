@@ -1,3 +1,4 @@
+import { remoteEndpointReason } from "./LocalEndpoint";
 import type {
   ChatRequest,
   ChatResult,
@@ -5,6 +6,7 @@ import type {
   LLMProvider,
   Result,
   ToolCall,
+  ToolDef,
 } from "./types";
 
 export interface LMStudioOptions {
@@ -14,6 +16,12 @@ export interface LMStudioOptions {
   timeoutMs: number;
   /** false = no native tools; tools are described in the prompt and parsed from content. */
   toolCalling: boolean;
+  /** In JSON mode, ask the server to constrain output to the tool-call schema (default on). */
+  structuredOutput?: boolean;
+  /** Only "ollama" changes behaviour (model unloading); all speak the same chat API. */
+  backend?: string;
+  /** Sampling seed sent with every request, for repeatable runs. */
+  seed?: number;
   fetch?: typeof fetch;
 }
 
@@ -78,15 +86,65 @@ export function parseToolCallsFromContent(text: string): ToolCall[] {
     }));
 }
 
+/** response_format that only admits {"tool_calls":[{name, arguments}]} for these tools. */
+export function toolCallsFormat(tools: ToolDef[]) {
+  const strip = (schema: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(schema).filter(([k]) => k !== "$schema"));
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "tool_calls",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          tool_calls: {
+            type: "array",
+            items: {
+              anyOf: tools.map((t) => ({
+                type: "object",
+                properties: {
+                  name: { const: t.name },
+                  arguments: strip(t.parameters),
+                },
+                required: ["name", "arguments"],
+              })),
+            },
+          },
+        },
+        required: ["tool_calls"],
+      },
+    },
+  };
+}
+
 export class LMStudioProvider implements LLMProvider {
-  constructor(private o: LMStudioOptions) {}
+  constructor(private o: LMStudioOptions) {
+    const why = remoteEndpointReason(o.baseUrl);
+    if (why) throw new Error(`refusing ${o.baseUrl}: ${why}`);
+  }
+
+  /** Ollama only: keep_alive 0 drops the model from memory. */
+  async unload(model: string): Promise<Result<void>> {
+    if (this.o.backend !== "ollama") return { ok: true, value: undefined };
+    const origin = new URL(this.o.baseUrl).origin;
+    const r = await this.request(
+      "/api/generate",
+      { method: "POST", body: JSON.stringify({ model, keep_alive: 0 }) },
+      undefined,
+      origin,
+    );
+    return r.ok ? { ok: true, value: undefined } : r;
+  }
 
   private async request(
     path: string,
     init: RequestInit,
     signal?: AbortSignal,
+    base: string = this.o.baseUrl,
+    timeoutMs: number = this.o.timeoutMs,
   ): Promise<Result<any>> {
-    const timeout = AbortSignal.timeout(this.o.timeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -95,16 +153,26 @@ export class LMStudioProvider implements LLMProvider {
     let res: Response;
     try {
       res = await (this.o.fetch ?? fetch)(
-        this.o.baseUrl.replace(/\/+$/, "") + path,
-        { ...init, headers, signal: sig },
+        base.replace(/\/+$/, "") + path,
+        // A redirect could carry the prompt to another host.
+        { ...init, headers, signal: sig, redirect: "error" },
       );
     } catch (e) {
       if (signal?.aborted) return fail("cancelled", "request cancelled");
       if (timeout.aborted)
-        return fail("timeout", `no response in ${this.o.timeoutMs}ms`);
+        return fail("timeout", `no response in ${timeoutMs}ms`);
       return fail("offline", String((e as Error)?.message ?? e));
     }
-    if (!res.ok) return fail("bad_status", `HTTP ${res.status}`, res.status);
+    if (!res.ok) {
+      // The server's own explanation ("no models loaded", "tools not
+      // supported"...) is what tells the user what to fix.
+      const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ");
+      return fail(
+        "bad_status",
+        `HTTP ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+        res.status,
+      );
+    }
     try {
       return { ok: true, value: await res.json() };
     } catch {
@@ -122,10 +190,32 @@ export class LMStudioProvider implements LLMProvider {
     return { ok: true, value: r.value.data.map((m: any) => String(m.id)) };
   }
 
+  // A model that keeps answering native tool requests with plain text is
+  // switched to constrained JSON output, which a small model can follow.
+  private nativeMisses = 0;
+  private structuredRejected = false;
+
   async chat(req: ChatRequest): Promise<Result<ChatResult>> {
+    if (!req.tools?.length) return this.attempt(req, false);
+    const native = this.o.toolCalling && this.nativeMisses < 2;
+    const r = await this.attempt(req, native);
+    if (!native) return r;
+    if (r.ok) {
+      this.nativeMisses = 0;
+      return r;
+    }
+    if (r.error.kind !== "malformed" || !/no tool call/.test(r.error.message))
+      return r;
+    this.nativeMisses++;
+    return this.attempt(req, false);
+  }
+
+  private async attempt(
+    req: ChatRequest,
+    native: boolean,
+  ): Promise<Result<ChatResult>> {
     const model = req.model ?? this.o.model;
     const wantTools = !!req.tools?.length;
-    const native = wantTools && this.o.toolCalling;
     const messages = [...req.messages];
     if (wantTools && !native) {
       messages.unshift({
@@ -142,14 +232,33 @@ export class LMStudioProvider implements LLMProvider {
       stream: false,
     };
     if (model) body.model = model;
+    if (this.o.seed !== undefined) body.seed = this.o.seed;
     if (native)
       body.tools = req.tools!.map((t) => ({ type: "function", function: t }));
+    const constrained =
+      wantTools && !native && this.o.structuredOutput !== false;
+    if (constrained && !this.structuredRejected)
+      body.response_format = toolCallsFormat(req.tools!);
 
-    const r = await this.request(
+    let r = await this.request(
       "/chat/completions",
       { method: "POST", body: JSON.stringify(body) },
       req.signal,
+      undefined,
+      req.timeoutMs,
     );
+    // A server without json_schema support: carry on with prompt-only JSON.
+    if (!r.ok && r.error.kind === "bad_status" && body.response_format) {
+      this.structuredRejected = true;
+      delete body.response_format;
+      r = await this.request(
+        "/chat/completions",
+        { method: "POST", body: JSON.stringify(body) },
+        req.signal,
+        undefined,
+        req.timeoutMs,
+      );
+    }
     if (!r.ok) return r;
     const msg = r.value?.choices?.[0]?.message;
     if (!msg) return fail("malformed", "no choices[0].message");
@@ -176,8 +285,29 @@ export class LMStudioProvider implements LLMProvider {
       }
     } else if (wantTools) {
       toolCalls = parseToolCallsFromContent(content);
-      if (toolCalls.length === 0)
-        return fail("malformed", "no tool call in response");
+      // Reasoning models keep their answer in a separate field, or spend the
+      // whole token budget thinking and leave the content empty.
+      const reasoning: string =
+        typeof msg.reasoning_content === "string"
+          ? msg.reasoning_content
+          : typeof msg.reasoning === "string"
+            ? msg.reasoning
+            : "";
+      if (toolCalls.length === 0 && reasoning)
+        toolCalls = parseToolCallsFromContent(reasoning);
+      if (toolCalls.length === 0) {
+        const finish = r.value?.choices?.[0]?.finish_reason;
+        const said = content.replace(/\s+/g, " ").trim().slice(0, 160);
+        return fail(
+          "malformed",
+          `no tool call in response (finish_reason ${finish ?? "?"}` +
+            `${reasoning ? `, ${reasoning.length} chars of reasoning` : ""}` +
+            `${said ? `, model said: "${said}"` : ", empty reply"})` +
+            (finish === "length"
+              ? "; the reply hit maxOutputTokens, raise it"
+              : ""),
+        );
+      }
     }
     return { ok: true, value: { content, toolCalls } };
   }

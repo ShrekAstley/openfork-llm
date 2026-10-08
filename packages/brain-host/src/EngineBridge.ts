@@ -2,12 +2,22 @@
 // brain-controlled nations (GameConfig.brainNations), posted to the game
 // server, which stamps them into turns like any player's; and the turn log it
 // replays to observe. See ENGINE_INTEGRATION.md.
-import type {
-  GameStartInfo,
-  Intent,
-  Turn,
+import { AllPlayers } from "@openfront/engine-api/game/GameTypes";
+import {
+  type GameStartInfo,
+  type Intent,
+  MAX_DIPLOMATIC_MESSAGE_LENGTH,
+  type Turn,
 } from "@openfront/engine-api/Schemas";
 import type { DiplomaticIntent } from "./diplomacy/intents";
+
+/** Fit text to the engine's message bound without splitting a surrogate pair. */
+function boundedText(text: string): string {
+  let out = text.trim().slice(0, MAX_DIPLOMATIC_MESSAGE_LENGTH);
+  const last = out.charCodeAt(out.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) out = out.slice(0, -1);
+  return out;
+}
 
 /**
  * The engine intents a diplomatic intent maps to; [] when it has no engine
@@ -44,8 +54,22 @@ export function toEngineIntent(
         return [{ type: "donate_troops", recipient, troops: intent.amount }];
       return [];
     }
+    case "SEND_DIPLOMATIC_MESSAGE": {
+      // Display-only, and every client can read the turn: the engine shows
+      // the text to the recipient (or all), but nothing in it is secret.
+      const text = boundedText(intent.text);
+      if (text.length === 0) return [];
+      return [
+        {
+          type: "diplomatic_message",
+          recipient:
+            intent.target === undefined ? AllPlayers : playerID(intent.target),
+          text,
+        },
+      ];
+    }
     default:
-      // Messages, treaties, blocs, intel: Brain Host state only.
+      // Treaties, blocs, intel: Brain Host state only.
       return [];
   }
 }

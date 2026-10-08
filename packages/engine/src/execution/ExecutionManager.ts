@@ -17,6 +17,7 @@ import { AttackExecution } from "./AttackExecution";
 import { BoatRetreatExecution } from "./BoatRetreatExecution";
 import { ConstructionExecution } from "./ConstructionExecution";
 import { DeleteUnitExecution } from "./DeleteUnitExecution";
+import { DiplomaticMessageExecution } from "./DiplomaticMessageExecution";
 import { DonateGoldExecution } from "./DonateGoldExecution";
 import { DonateTroopsExecution } from "./DonateTroopExecution";
 import { EmbargoAllExecution } from "./EmbargoAllExecution";
@@ -143,6 +144,12 @@ export class Executor {
           intent.recipient,
           intent.quickChatKey,
           intent.target,
+        );
+      case "diplomatic_message":
+        return new DiplomaticMessageExecution(
+          player,
+          intent.recipient,
+          intent.text,
         );
       case "mark_disconnected":
         return new MarkDisconnectedExecution(player, intent.isDisconnected);

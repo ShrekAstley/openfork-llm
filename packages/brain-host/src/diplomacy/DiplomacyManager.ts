@@ -40,6 +40,11 @@ export interface TurnResult {
 /** Facade: owns the state and wires every manager module together. */
 export class DiplomacyManager {
   state: DiplomacyState;
+  /**
+   * Turns a treaty proposal stays open. The runtime sets it to span several
+   * decision cycles, so the recipient can answer on a later one.
+   */
+  proposalTtl = Treaties.PROPOSAL_TTL;
 
   constructor(empires: Empire[] = []) {
     this.state = newState(empires);
@@ -153,6 +158,7 @@ export class DiplomacyManager {
       case "PROPOSE_TREATY":
         Treaties.propose(s, turn, me, [i.target], i.treatyType, i.terms, {
           secret: i.secret,
+          ttl: this.proposalTtl,
         });
         return;
       case "ACCEPT_TREATY": {
@@ -174,6 +180,7 @@ export class DiplomacyManager {
           [i.target],
           i.ceasefire ? "ceasefire" : "peace",
           i.terms,
+          { ttl: this.proposalTtl },
         );
         return;
       case "FORM_ALLIANCE": {

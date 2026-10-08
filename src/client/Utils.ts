@@ -657,6 +657,7 @@ export function getMessageTypeClasses(type: MessageType): string {
     case MessageType.RENEW_ALLIANCE:
       return severityColors["warn"];
     case MessageType.CHAT:
+    case MessageType.DIPLOMATIC_MESSAGE:
     case MessageType.ALLIANCE_REQUEST:
       return severityColors["info"];
     default:

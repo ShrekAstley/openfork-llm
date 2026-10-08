@@ -1,5 +1,9 @@
 import { GameType } from "@openfront/engine-api/game/GameTypes";
-import { GameConfig, Intent } from "@openfront/engine-api/Schemas";
+import {
+  brainClientID,
+  GameConfig,
+  Intent,
+} from "@openfront/engine-api/Schemas";
 import { describe, expect, it } from "vitest";
 import {
   authorizeIntent,
@@ -41,6 +45,11 @@ const config = (c: Partial<GameConfig>): Intent => ({
 const timer: Intent = { type: "toggle_game_start_timer" };
 const pause: Intent = { type: "toggle_pause", paused: true };
 const spawn: Intent = { type: "spawn", tile: 1 };
+const say: Intent = {
+  type: "diplomatic_message",
+  recipient: "AllPlayers",
+  text: "hello",
+};
 
 describe("authorizeIntent", () => {
   it.each<[string, Intent, IntentActor, IntentGameState, number | null]>([
@@ -208,6 +217,18 @@ describe("authorizeIntent", () => {
     ],
     ["gameplay by an admin", spawn, admin, lobby(), null],
     ["gameplay by the bot", spawn, bot, lobby(), 400],
+
+    // Free text: only a brain nation's clientID may send it.
+    ["diplomatic message by a player", say, player, lobby(), 403],
+    ["diplomatic message by the host", say, host, lobby(), 403],
+    ["diplomatic message by an admin", say, admin, lobby(), 403],
+    [
+      "diplomatic message by a brain nation",
+      say,
+      actor({ clientID: brainClientID(0) }),
+      lobby(),
+      null,
+    ],
   ])("%s", (_name, intent, who, game, status) => {
     const outcome = authorizeIntent(intent, who, game);
     if (status === null) {

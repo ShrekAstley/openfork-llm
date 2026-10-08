@@ -45,7 +45,9 @@
     "inst": "npm ci --ignore-scripts",
     "brain:check": "tsx packages/brain-host/scripts/check.ts",
     "brain:create": "tsx packages/brain-host/scripts/create.ts",
-    "brain:run": "tsx packages/brain-host/scripts/run.ts"
+    "brain:run": "tsx packages/brain-host/scripts/run.ts",
+    "brain:plan": "tsx packages/brain-host/scripts/plan.ts",
+    "brain:log": "tsx packages/brain-host/scripts/log.ts"
   },
   "lint-staged": {
     "**/*.{js,mjs,cjs,ts,jsx,tsx}": [

@@ -443,6 +443,7 @@ export enum MessageType {
   DONATION_RECEIVED,
   CHAT,
   RENEW_ALLIANCE,
+  DIPLOMATIC_MESSAGE,
 }
 
 // Message categories used for filtering events in the EventsDisplay
@@ -478,6 +479,7 @@ export const MESSAGE_TYPE_CATEGORIES: Record<MessageType, MessageCategory> = {
   [MessageType.DONATION_SENT]: MessageCategory.TRADE,
   [MessageType.DONATION_RECEIVED]: MessageCategory.TRADE,
   [MessageType.CHAT]: MessageCategory.CHAT,
+  [MessageType.DIPLOMATIC_MESSAGE]: MessageCategory.CHAT,
 } as const;
 
 /**
