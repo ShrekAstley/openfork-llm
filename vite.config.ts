@@ -427,6 +427,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 9000,
       host: process.env.VITE_HOST === "lan",
+      // The Brain Host writes these into the project folder while a game runs
+      // (state every few seconds, decision log, cache); a change in a watched
+      // file must not reload the page and drop the player out of the lobby.
+      watch: {
+        ignored: ["**/brain.*.json", "**/brain.*.jsonl", "**/brain.*.tmp"],
+      },
       // Automatically open the browser when the server starts
       open: process.env.SKIP_BROWSER_OPEN !== "true",
       proxy: {
