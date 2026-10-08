@@ -86,6 +86,10 @@ export function applyGameConfigPatch(
   // (the full config it sends has hostCheats: undefined when the toggle is
   // off), so `undefined` here means "clear", not "leave unchanged".
   target.hostCheats = patch.hostCheats;
+  // LLMFront: the nations a Brain Host may drive. An empty list clears it.
+  // Driving one still takes the admin-bot key; this only makes them passive.
+  if (patch.brainNations !== undefined)
+    target.brainNations = [...new Set(patch.brainNations)];
 }
 
 // Whether the host-only cheat block actually grants anything: mere presence

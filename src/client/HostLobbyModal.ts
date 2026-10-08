@@ -53,10 +53,11 @@ import {
   getNationsForCompactMap,
   getRandomMapType,
   getUpdatedDisabledUnits,
+  nationsWithBrains,
   parseBoundedFloatFromInput,
   parseBoundedIntegerFromInput,
   preventDisallowedKeys,
-  sliderToNationsConfig,
+  resolveBrainNations,
   toOptionalNumber,
 } from "./utilities/GameConfigHelpers";
 
@@ -65,6 +66,10 @@ export class HostLobbyModal extends BaseModal {
   @state() private selectedMap: GameMapType = GameMapType.World;
   @state() private selectedDifficulty: Difficulty = Difficulty.Easy;
   @state() private nations: number = 0;
+  // LLMFront: nations a local Brain Host drives with a language model.
+  @state() private brainCount: number = 0;
+  @state() private brainNames: string = "";
+  @state() private mapNationNames: string[] = [];
   @state() private defaultNationCount: number = 0;
   @state() private gameMode: GameMode = GameMode.FFA;
   @state() private teamCount: TeamCountConfig = 2;
@@ -722,6 +727,8 @@ export class HostLobbyModal extends BaseModal {
               .handleConfigHostCheatToggleChanged}
             @unit-toggle-changed=${this.handleConfigUnitToggleChanged}
           ></game-config-settings>
+
+          ${this.renderBrainSettings()}
 
           <lobby-player-view
             class="mt-10"
@@ -1536,6 +1543,86 @@ export class HostLobbyModal extends BaseModal {
     return ids.length > 0 ? ids : undefined;
   }
 
+  private brainSelection() {
+    return resolveBrainNations(
+      this.brainCount,
+      this.brainNames,
+      this.mapNationNames,
+    );
+  }
+
+  private renderBrainSettings() {
+    const { names, unknown } = this.brainSelection();
+    return html`
+      <div
+        class="mt-10 p-4 rounded-xl border border-white/10 bg-white/5 space-y-3 ${this
+          .publiclyListed
+          ? "opacity-60"
+          : ""}"
+        ?inert=${this.publiclyListed}
+      >
+        <div class="text-white font-bold">
+          ${translateText("host_modal.llm_title")}
+        </div>
+        <div class="text-white/60 text-sm">
+          ${translateText("host_modal.llm_description")}
+        </div>
+        <label class="block text-white/80 text-sm">
+          ${translateText("host_modal.llm_count")}
+          <input
+            type="number"
+            min="0"
+            max="32"
+            class="ml-2 w-20 rounded bg-black/40 px-2 py-1 text-white"
+            .value=${String(this.brainCount)}
+            @change=${this.handleBrainCountChange}
+          />
+        </label>
+        <label class="block text-white/80 text-sm">
+          ${translateText("host_modal.llm_names")}
+          <input
+            type="text"
+            class="mt-1 w-full rounded bg-black/40 px-2 py-1 text-white"
+            placeholder=${translateText("host_modal.llm_names_placeholder")}
+            .value=${this.brainNames}
+            @change=${this.handleBrainNamesChange}
+          />
+        </label>
+        ${unknown.length > 0
+          ? html`<div class="text-red-300 text-sm">
+              ${translateText("host_modal.llm_unknown", {
+                names: unknown.join(", "),
+              })}
+            </div>`
+          : nothing}
+        ${names.length > 0
+          ? html`<div class="text-white/80 text-sm">
+                ${translateText("host_modal.llm_selected", {
+                  names: names.join(", "),
+                })}
+              </div>
+              <div class="text-white/60 text-sm">
+                ${translateText("host_modal.llm_run")}
+                <code class="block mt-1 p-2 rounded bg-black/40 select-all">
+                  npm run brain:run -- --game ${this.lobbyId}
+                </code>
+              </div>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private handleBrainCountChange = (e: Event) => {
+    const n = Math.floor(Number((e.target as HTMLInputElement).value));
+    this.brainCount = Number.isFinite(n) ? Math.max(0, Math.min(32, n)) : 0;
+    this.putGameConfig();
+  };
+
+  private handleBrainNamesChange = (e: Event) => {
+    this.brainNames = (e.target as HTMLInputElement).value;
+    this.putGameConfig();
+  };
+
   private async putGameConfig() {
     const spawnImmunityTicks = this.spawnImmunityDurationMinutes
       ? this.spawnImmunityDurationMinutes * 60 * 10
@@ -1564,10 +1651,12 @@ export class HostLobbyModal extends BaseModal {
               ? spawnImmunityTicks
               : null,
             playerTeams: this.teamCount,
-            nations: sliderToNationsConfig(
+            nations: nationsWithBrains(
               this.nations,
               this.defaultNationCount,
+              this.brainSelection().names.length,
             ),
+            brainNations: this.brainSelection().names,
             maxTimerValue: this.maxTimer === true ? this.maxTimerValue : null,
             startDelay: this.startDelayValue,
             goldMultiplier:
@@ -1664,6 +1753,7 @@ export class HostLobbyModal extends BaseModal {
       // Only update if the map hasn't changed
       if (this.selectedMap === currentMap) {
         this.defaultNationCount = manifest.nations.length;
+        this.mapNationNames = manifest.nations.map((n) => n.name);
         this.nations = this.compactMap
           ? Math.max(0, Math.floor(manifest.nations.length * 0.25))
           : manifest.nations.length;

@@ -13,17 +13,21 @@ import fs from "fs";
 import { parseArgs } from "node:util";
 import path from "path";
 
+// An empty variable counts as unset.
+const env = (name: string) =>
+  process.env[name] === "" ? undefined : process.env[name];
+
 const { values: a } = parseArgs({
   options: {
     map: { type: "string", default: "World" },
     size: { type: "string", default: GameMapSize.Normal },
     // The .bat passes these as environment variables (names contain spaces).
-    brains: { type: "string", default: process.env.BRAIN_COUNT || "2" },
+    brains: { type: "string", default: env("BRAIN_COUNT") ?? "2" },
     nations: {
       type: "string",
-      default: process.env.BRAIN_NATIONS || undefined,
+      default: env("BRAIN_NATIONS"),
     },
-    names: { type: "string", default: process.env.BRAIN_NAMES || undefined },
+    names: { type: "string", default: env("BRAIN_NAMES") },
     "list-nations": { type: "boolean", default: false },
     bots: { type: "string", default: "0" },
     server: { type: "string", default: "http://localhost:3001" },
