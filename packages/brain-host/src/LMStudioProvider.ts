@@ -212,8 +212,29 @@ export class LMStudioProvider implements LLMProvider {
       }
     } else if (wantTools) {
       toolCalls = parseToolCallsFromContent(content);
-      if (toolCalls.length === 0)
-        return fail("malformed", "no tool call in response");
+      // Reasoning models keep their answer in a separate field, or spend the
+      // whole token budget thinking and leave the content empty.
+      const reasoning: string =
+        typeof msg.reasoning_content === "string"
+          ? msg.reasoning_content
+          : typeof msg.reasoning === "string"
+            ? msg.reasoning
+            : "";
+      if (toolCalls.length === 0 && reasoning)
+        toolCalls = parseToolCallsFromContent(reasoning);
+      if (toolCalls.length === 0) {
+        const finish = r.value?.choices?.[0]?.finish_reason;
+        const said = content.replace(/\s+/g, " ").trim().slice(0, 160);
+        return fail(
+          "malformed",
+          `no tool call in response (finish_reason ${finish ?? "?"}` +
+            `${reasoning ? `, ${reasoning.length} chars of reasoning` : ""}` +
+            `${said ? `, model said: "${said}"` : ", empty reply"})` +
+            (finish === "length"
+              ? "; the reply hit maxOutputTokens, raise it"
+              : ""),
+        );
+      }
     }
     return { ok: true, value: { content, toolCalls } };
   }

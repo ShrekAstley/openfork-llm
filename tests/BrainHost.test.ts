@@ -266,3 +266,45 @@ describe("testConnection", () => {
     expect(r.error?.kind).toBe("offline");
   });
 });
+
+describe("LMStudioProvider: replies without tool calls", () => {
+  const ask = (message: object, finish = "stop") =>
+    provider((async () =>
+      json({
+        choices: [{ message, finish_reason: finish }],
+      })) as typeof fetch).chat({
+      ...req,
+      tools,
+    });
+
+  test("says what the model did say, and why it may have been cut off", async () => {
+    const r = await ask({ content: "I would attack Canada." });
+    expect(r).toMatchObject({ ok: false, error: { kind: "malformed" } });
+    expect((r as any).error.message).toContain(
+      'model said: "I would attack Canada."',
+    );
+    const cut = await ask({ content: "" }, "length");
+    expect((cut as any).error.message).toContain("empty reply");
+    expect((cut as any).error.message).toContain("raise it");
+  });
+
+  test("reports reasoning that ate the budget", async () => {
+    const r = await ask(
+      { content: "", reasoning_content: "Let me think..." },
+      "length",
+    );
+    expect((r as any).error.message).toContain("15 chars of reasoning");
+  });
+
+  test("takes the tool call from the reasoning field when content is empty", async () => {
+    const r = await ask({
+      content: "",
+      reasoning_content:
+        'Plan: {"name":"attack","arguments":{"target":"wilderness","percent":20}}',
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      value: { toolCalls: [{ name: "attack" }] },
+    });
+  });
+});
