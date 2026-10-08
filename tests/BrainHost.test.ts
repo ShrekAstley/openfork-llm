@@ -308,3 +308,76 @@ describe("LMStudioProvider: replies without tool calls", () => {
     });
   });
 });
+
+describe("LMStudioProvider: models that cannot call tools", () => {
+  const call = {
+    name: "attack",
+    arguments: { target: "wilderness", percent: 5 },
+  };
+  const plain = () => completion({ content: 'send_message "attack"' });
+  const json_ = () =>
+    completion({ content: JSON.stringify({ tool_calls: [call] }) });
+
+  test("a native miss is retried at once as constrained JSON, then stays in JSON mode", async () => {
+    const bodies: any[] = [];
+    const p = provider((async (_u: string, init: RequestInit) => {
+      const b = JSON.parse(String(init.body));
+      bodies.push(b);
+      return b.tools ? plain() : json_();
+    }) as unknown as typeof fetch);
+    for (let i = 0; i < 3; i++) {
+      const r = await p.chat({ ...req, tools });
+      expect(r).toMatchObject({
+        ok: true,
+        value: { toolCalls: [{ name: "attack" }] },
+      });
+    }
+    // Calls 1-2: native then JSON. Call 3: JSON only.
+    expect(bodies.map((b) => (b.tools ? "native" : "json"))).toEqual([
+      "native",
+      "json",
+      "native",
+      "json",
+      "json",
+    ]);
+    const rf = bodies[1].response_format;
+    expect(rf.type).toBe("json_schema");
+    const names = rf.json_schema.schema.properties.tool_calls.items.anyOf.map(
+      (o: any) => o.properties.name.const,
+    );
+    expect(names).toEqual(["attack"]);
+    expect(JSON.stringify(rf)).not.toContain("$schema");
+  });
+
+  test("a server that rejects response_format gets prompt-only JSON", async () => {
+    const seen: boolean[] = [];
+    const p = provider(
+      (async (_u: string, init: RequestInit) => {
+        const b = JSON.parse(String(init.body));
+        seen.push(!!b.response_format);
+        return b.response_format
+          ? new Response("response_format not supported", { status: 400 })
+          : json_();
+      }) as unknown as typeof fetch,
+      false,
+    );
+    expect(await p.chat({ ...req, tools })).toMatchObject({ ok: true });
+    expect(await p.chat({ ...req, tools })).toMatchObject({ ok: true });
+    expect(seen).toEqual([true, false, false]);
+  });
+
+  test("structuredOutput off sends no response_format", async () => {
+    let body: any;
+    const p = new LMStudioProvider({
+      ...config,
+      toolCalling: false,
+      structuredOutput: false,
+      fetch: (async (_u: string, init: RequestInit) => {
+        body = JSON.parse(String(init.body));
+        return json_();
+      }) as unknown as typeof fetch,
+    });
+    await p.chat({ ...req, tools });
+    expect(body.response_format).toBeUndefined();
+  });
+});

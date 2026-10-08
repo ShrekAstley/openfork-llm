@@ -6,6 +6,7 @@ import type {
   LLMProvider,
   Result,
   ToolCall,
+  ToolDef,
 } from "./types";
 
 export interface LMStudioOptions {
@@ -15,6 +16,8 @@ export interface LMStudioOptions {
   timeoutMs: number;
   /** false = no native tools; tools are described in the prompt and parsed from content. */
   toolCalling: boolean;
+  /** In JSON mode, ask the server to constrain output to the tool-call schema (default on). */
+  structuredOutput?: boolean;
   /** Only "ollama" changes behaviour (model unloading); all speak the same chat API. */
   backend?: string;
   /** Sampling seed sent with every request, for repeatable runs. */
@@ -81,6 +84,38 @@ export function parseToolCallsFromContent(text: string): ToolCall[] {
       arguments:
         c.arguments && typeof c.arguments === "object" ? c.arguments : {},
     }));
+}
+
+/** response_format that only admits {"tool_calls":[{name, arguments}]} for these tools. */
+export function toolCallsFormat(tools: ToolDef[]) {
+  const strip = (schema: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(schema).filter(([k]) => k !== "$schema"));
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "tool_calls",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          tool_calls: {
+            type: "array",
+            items: {
+              anyOf: tools.map((t) => ({
+                type: "object",
+                properties: {
+                  name: { const: t.name },
+                  arguments: strip(t.parameters),
+                },
+                required: ["name", "arguments"],
+              })),
+            },
+          },
+        },
+        required: ["tool_calls"],
+      },
+    },
+  };
 }
 
 export class LMStudioProvider implements LLMProvider {
@@ -155,10 +190,32 @@ export class LMStudioProvider implements LLMProvider {
     return { ok: true, value: r.value.data.map((m: any) => String(m.id)) };
   }
 
+  // A model that keeps answering native tool requests with plain text is
+  // switched to constrained JSON output, which a small model can follow.
+  private nativeMisses = 0;
+  private structuredRejected = false;
+
   async chat(req: ChatRequest): Promise<Result<ChatResult>> {
+    if (!req.tools?.length) return this.attempt(req, false);
+    const native = this.o.toolCalling && this.nativeMisses < 2;
+    const r = await this.attempt(req, native);
+    if (!native) return r;
+    if (r.ok) {
+      this.nativeMisses = 0;
+      return r;
+    }
+    if (r.error.kind !== "malformed" || !/no tool call/.test(r.error.message))
+      return r;
+    this.nativeMisses++;
+    return this.attempt(req, false);
+  }
+
+  private async attempt(
+    req: ChatRequest,
+    native: boolean,
+  ): Promise<Result<ChatResult>> {
     const model = req.model ?? this.o.model;
     const wantTools = !!req.tools?.length;
-    const native = wantTools && this.o.toolCalling;
     const messages = [...req.messages];
     if (wantTools && !native) {
       messages.unshift({
@@ -178,14 +235,30 @@ export class LMStudioProvider implements LLMProvider {
     if (this.o.seed !== undefined) body.seed = this.o.seed;
     if (native)
       body.tools = req.tools!.map((t) => ({ type: "function", function: t }));
+    const constrained =
+      wantTools && !native && this.o.structuredOutput !== false;
+    if (constrained && !this.structuredRejected)
+      body.response_format = toolCallsFormat(req.tools!);
 
-    const r = await this.request(
+    let r = await this.request(
       "/chat/completions",
       { method: "POST", body: JSON.stringify(body) },
       req.signal,
       undefined,
       req.timeoutMs,
     );
+    // A server without json_schema support: carry on with prompt-only JSON.
+    if (!r.ok && r.error.kind === "bad_status" && body.response_format) {
+      this.structuredRejected = true;
+      delete body.response_format;
+      r = await this.request(
+        "/chat/completions",
+        { method: "POST", body: JSON.stringify(body) },
+        req.signal,
+        undefined,
+        req.timeoutMs,
+      );
+    }
     if (!r.ok) return r;
     const msg = r.value?.choices?.[0]?.message;
     if (!msg) return fail("malformed", "no choices[0].message");

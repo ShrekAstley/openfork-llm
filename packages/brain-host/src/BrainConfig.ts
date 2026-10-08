@@ -68,6 +68,8 @@ const BaseSchema = z.object({
   /** A decision older than this (simulated seconds) when it returns is dropped. */
   maxDecisionAgeSeconds: z.number().positive().default(30),
   toolCalling: z.boolean().default(true),
+  /** In JSON mode (no native tools, or after native calls kept failing) constrain the output to the tool schema. */
+  structuredOutput: z.boolean().default(true),
   /** Sent to the server as the sampling seed when set, for repeatable runs. */
   seed: z.number().int().optional(),
   /** Model name -> size/quantisation/context. Empires reference these by model name. */
