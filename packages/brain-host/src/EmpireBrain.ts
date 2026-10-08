@@ -2,9 +2,11 @@
 // asks the LLM, and turns the answer into validated engine intents. Never
 // awaited by the turn loop; a stale, failed or cancelled answer changes
 // nothing (the nation keeps doing whatever its last orders set in motion).
+import { PlayerType } from "@openfront/engine-api/game/GameTypes";
 import type { Intent } from "@openfront/engine-api/Schemas";
 import type { Game, Player } from "@openfront/engine/game/Game";
 import { type EmpireBrainState } from "./BrainState";
+import { buildOptions } from "./BuildPlanner";
 import { type DecisionLog } from "./DecisionLog";
 import { DecisionScheduler, Importance } from "./DecisionScheduler";
 import type { DiplomacyManager } from "./diplomacy/DiplomacyManager";
@@ -63,12 +65,15 @@ export interface InboxMessage {
 const MAX_EVENTS = 8;
 const MAX_INBOX = 5;
 const MAX_REJECTED = 5;
+const MAX_ELIMINATED = 12;
 const MAX_MESSAGES_PER_DECISION = 2;
 const MAX_HISTORY = 20;
 const SYSTEM = (name: string) =>
   `You command the nation ${name} in OpenFront, a real-time territory strategy game. ` +
   "Each message is your current situation. Act only through the tools; use player names exactly as shown. " +
-  "To expand or fight, use the attack tool (target 'wilderness' for unclaimed land). " +
+  "A good decision uses two to four different tools: grow (attack 'wilderness' or a weaker neighbor), " +
+  "spend gold (build a city first, then port, factory or defense post; unspent gold is wasted), " +
+  "and make diplomacy (propose_treaty or form_alliance with a neighbor you do not want to fight). " +
   "send_message only talks to another player (a greeting, an offer, a warning); never put your plans or orders in it. " +
   "Call plan once with your objective and a one-line summary. No explanations. " +
   "Other players may message you or propose treaties; FOR YOU TO ANSWER lists them. " +
@@ -98,6 +103,11 @@ export class EmpireBrain {
   private seenTreaties = new Set<string>();
   private tilesAtDecision = 0;
   private territoryNoted = false;
+  private alive = new Set<string>();
+  /** Nations and humans that have fallen, oldest first (bounded). */
+  eliminated: string[] = [];
+  /** Tribes wiped out so far; too many to name. */
+  tribesLost = 0;
 
   constructor(readonly o: EmpireBrainOptions) {
     this.scheduler = new DecisionScheduler(o.intervalTicks, o.backoffMax);
@@ -137,6 +147,9 @@ export class EmpireBrain {
         embargoers: [...this.embargoers],
         tilesAtDecision: this.tilesAtDecision,
         territoryNoted: this.territoryNoted,
+        alive: [...this.alive],
+        eliminated: [...this.eliminated],
+        tribesLost: this.tribesLost,
       },
     };
   }
@@ -159,6 +172,9 @@ export class EmpireBrain {
     this.embargoers = new Set(s.seen.embargoers);
     this.tilesAtDecision = s.seen.tilesAtDecision;
     this.territoryNoted = s.seen.territoryNoted;
+    this.alive = new Set(s.seen.alive);
+    this.eliminated = [...s.seen.eliminated];
+    this.tribesLost = s.seen.tribesLost;
     this.busy = false;
   }
 
@@ -249,6 +265,7 @@ export class EmpireBrain {
     this.embargoers = embargoers;
 
     this.observeDiplomacy(w, me.name());
+    this.observeDeaths(w, me.name());
 
     const tiles = me.numTilesOwned();
     if (!this.territoryNoted && this.tilesAtDecision > 0) {
@@ -261,6 +278,45 @@ export class EmpireBrain {
           `Territory ${change < 0 ? "lost" : "gained"} ${Math.round(Math.abs(change) * 100)}% since last decision.`,
         );
       }
+    }
+  }
+
+  /**
+   * Nations, humans and tribes that left the game since the last step. A
+   * fallen nation is named (and remembered when it was an ally); fallen
+   * tribes are only counted.
+   */
+  private observeDeaths(w: BrainWorld, self: string): void {
+    const now = new Set<string>();
+    const all = w.game.allPlayers();
+    for (const p of all) if (p.isAlive()) now.add(p.name());
+    const first = this.alive.size === 0;
+    const gone = first ? [] : [...this.alive].filter((n) => !now.has(n));
+    this.alive = now;
+    let tribes = 0;
+    for (const name of gone) {
+      if (name === self) continue;
+      const p = all.find((x) => x.name() === name);
+      if (p?.type() === PlayerType.Bot) {
+        tribes++;
+        continue;
+      }
+      this.eliminated.push(name);
+      this.event(
+        w,
+        this.allies.has(name) ? Importance.HIGH : Importance.MEDIUM,
+        `${name} was eliminated.`,
+      );
+    }
+    if (this.eliminated.length > MAX_ELIMINATED)
+      this.eliminated.splice(0, this.eliminated.length - MAX_ELIMINATED);
+    if (tribes > 0) {
+      this.tribesLost += tribes;
+      this.event(
+        w,
+        Importance.LOW,
+        `${tribes} tribe${tribes === 1 ? " was" : "s were"} wiped out.`,
+      );
     }
   }
 
@@ -325,6 +381,9 @@ export class EmpireBrain {
       events: this.events,
       rejected: this.rejected,
       inbox: this.inbox,
+      buildOptions: buildOptions(w.game, me),
+      eliminated: this.eliminated,
+      tribesLost: this.tribesLost,
       lastDecision: last && `${last.objective}: ${last.summary}`,
       budgetTokens: this.o.budgetTokens,
     });
@@ -427,6 +486,7 @@ export class EmpireBrain {
     const intents: Intent[] = [];
     const reasons: { action: string; reason?: string }[] = [];
     let messages = 0;
+    const budget = { spent: 0n, tiles: [] as number[] };
     for (const call of r.result.toolCalls) {
       // A chatty model would flood every player's event feed.
       if (
@@ -443,6 +503,7 @@ export class EmpireBrain {
         me,
         dm: w.dm,
         turn: Math.floor(w.game.ticks() / 10),
+        budget,
       });
       if (a.kind === "plan") {
         d.objective = a.objective;

@@ -98,6 +98,7 @@ export type Respond = (
 export async function liveDuoGame(
   respond: Respond,
   over: Record<string, unknown> = {},
+  gameOver: Record<string, unknown> = {},
 ) {
   const GAME = cid("brconv");
   const game = makeGame({
@@ -107,6 +108,7 @@ export async function liveDuoGame(
       nations: "default",
       bots: 0,
       brainNations: [US, CA],
+      ...gameOver,
     },
   });
   const human = makeClient({ clientID: cid("human"), username: "human" });

@@ -10,6 +10,12 @@ import {
 } from "@openfront/engine-api/Schemas";
 import type { Game, Player } from "@openfront/engine/game/Game";
 import { z } from "zod";
+import {
+  type BuildBudget,
+  planBuild,
+  STRUCTURE_NAMES,
+  STRUCTURES,
+} from "./BuildPlanner";
 import type { DiplomacyManager } from "./diplomacy/DiplomacyManager";
 import { type DiplomaticIntent, validateIntent } from "./diplomacy/intents";
 import { TREATY_TYPES } from "./diplomacy/schemas";
@@ -73,6 +79,10 @@ const TOOLS = {
     "Reject a treaty proposed to you, by its id.",
     z.object({ treatyId: z.string().min(1).max(32) }),
   ],
+  build: [
+    "Build a structure on your own land; the tile is chosen for you. A city raises income and troop capacity, a port enables trade and ships, a factory boosts trains, a defense post strengthens your border.",
+    z.object({ structure: z.enum(STRUCTURE_NAMES) }),
+  ],
   remember: [
     "Keep one fact for the rest of the game (a betrayal, a promise, a long-term goal). Only what you will need later.",
     z.object({
@@ -125,6 +135,8 @@ export interface ActionContext {
   /** Empire ids are player names. */
   dm: DiplomacyManager;
   turn: number;
+  /** Gold and sites already committed by this decision's earlier builds. */
+  budget?: BuildBudget;
 }
 
 /**
@@ -188,6 +200,26 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
     return { kind: "act", label, engine, reason };
   }
 
+  if (call.name === "build") {
+    const budget = c.budget ?? { spent: 0n, tiles: [] };
+    const plan = planBuild(game, me, a.structure, budget);
+    if (!plan.ok) return no(plan.why);
+    budget.spent += plan.cost;
+    budget.tiles.push(plan.tile);
+    return {
+      kind: "act",
+      label,
+      engine: [
+        {
+          type: "build_unit",
+          unit: STRUCTURES[a.structure as keyof typeof STRUCTURES],
+          tile: plan.tile,
+        },
+      ],
+      reason,
+    };
+  }
+
   const wild = String(a.target).toLowerCase() === "wilderness";
   const all = call.name === "emoji" && String(a.target).toLowerCase() === "all";
   const p =
@@ -198,7 +230,10 @@ export function resolveAction(call: ToolCall, c: ActionContext): Action {
           .find((x) => x.name().toLowerCase() === a.target.toLowerCase());
   if (!wild && !all) {
     if (!p) return no(`unknown player "${a.target}"`);
-    if (p === me) return no("cannot target yourself");
+    if (p === me)
+      return no(
+        `cannot target yourself (you are ${me.name()}); name another player`,
+      );
   } else if (wild && call.name !== "attack") {
     return no("wilderness is only an attack target");
   }

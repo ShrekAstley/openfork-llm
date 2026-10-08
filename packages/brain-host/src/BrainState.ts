@@ -65,6 +65,10 @@ export const EmpireBrainStateSchema = z.object({
     embargoers: strings,
     tilesAtDecision: z.number().int().min(0),
     territoryNoted: z.boolean(),
+    /** Who was alive at the last step, and who has been lost since. */
+    alive: strings.default([]),
+    eliminated: strings.default([]),
+    tribesLost: z.number().int().min(0).default(0),
   }),
 });
 export type EmpireBrainState = z.infer<typeof EmpireBrainStateSchema>;

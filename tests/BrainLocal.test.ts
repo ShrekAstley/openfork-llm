@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { PlayerType } from "@openfront/engine-api/game/GameTypes";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -8,6 +9,7 @@ import {
   BrainConfigSchema,
   loadBrainConfig,
 } from "../packages/brain-host/src/BrainConfig";
+import { EmpireBrainStateSchema } from "../packages/brain-host/src/BrainState";
 import {
   DecisionLog,
   describeDecision,
@@ -18,6 +20,7 @@ import {
   DecisionScheduler,
   Importance,
 } from "../packages/brain-host/src/DecisionScheduler";
+import { EmpireBrain } from "../packages/brain-host/src/EmpireBrain";
 import {
   MAX_MEMORIES,
   recall,
@@ -505,5 +508,84 @@ describe("tool list", () => {
     expect(none).not.toContain("reject_treaty");
     expect(none).toContain("attack");
     expect(none).toContain("send_message");
+  });
+});
+
+describe("knowing who has fallen", () => {
+  const mk = (name: string, type: PlayerType) => ({
+    alive: true,
+    name: () => name,
+    type: () => type,
+    isAlive() {
+      return this.alive;
+    },
+  });
+  const setup = () => {
+    const players = [
+      mk("Me", PlayerType.Nation),
+      mk("Rival", PlayerType.Nation),
+      mk("Friend", PlayerType.Nation),
+      mk("Tribe1", PlayerType.Bot),
+      mk("Tribe2", PlayerType.Bot),
+    ];
+    const brain = new EmpireBrain({
+      name: "Me",
+      personality: "",
+      directives: [],
+      intervalTicks: 100,
+      maxAgeTicks: 300,
+      temperature: 0,
+      maxTokens: 100,
+    });
+    const w = { game: { allPlayers: () => players, ticks: () => 50 } } as any;
+    const check = () => (brain as any).observeDeaths(w, "Me");
+    return { players, brain, check };
+  };
+
+  test("names fallen nations, counts fallen tribes, and raises no event at the start", () => {
+    const { players, brain, check } = setup();
+    check();
+    expect(brain.events).toEqual([]);
+    players[1].alive = false; // Rival
+    players[3].alive = false; // Tribe1
+    players[4].alive = false; // Tribe2
+    check();
+    expect(brain.eliminated).toEqual(["Rival"]);
+    expect(brain.tribesLost).toBe(2);
+    expect(brain.events.join("\n")).toContain("Rival was eliminated.");
+    expect(brain.events.join("\n")).toContain("2 tribes were wiped out.");
+    // Reported once.
+    check();
+    expect(brain.eliminated).toEqual(["Rival"]);
+    expect(brain.tribesLost).toBe(2);
+  });
+
+  test("an ally falling is remembered", () => {
+    const { players, brain, check } = setup();
+    check();
+    (brain as any).allies = new Set(["Friend"]);
+    players[2].alive = false;
+    check();
+    expect(brain.memories.map((m) => m.text)).toContain(
+      "Friend was eliminated.",
+    );
+  });
+
+  test("survives a save and resume without repeating the news", () => {
+    const { players, brain, check } = setup();
+    check();
+    players[1].alive = false;
+    check();
+    const saved = EmpireBrainStateSchema.parse(
+      JSON.parse(JSON.stringify(brain.snapshot())),
+    );
+    const again = setup();
+    again.players[1].alive = false;
+    again.brain.restore(saved);
+    again.check();
+    expect(again.brain.eliminated).toEqual(["Rival"]);
+    expect(again.brain.events.filter((e) => e.includes("Rival"))).toHaveLength(
+      1,
+    );
   });
 });

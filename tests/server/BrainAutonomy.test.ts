@@ -110,6 +110,76 @@ describe("decision log", () => {
   });
 });
 
+describe("building", () => {
+  it("offers affordable structures and builds one on a tile the host picks", async () => {
+    const file = path.join(dir, "d.jsonl");
+    let built = false;
+    const g = await liveDuoGame(
+      (req) => {
+        if (who(req) !== US) return ok([plan("wait", "w")]);
+        if (built) return ok([plan("grow", "again")]);
+        built = true;
+        return ok([
+          plan("grow", "economy"),
+          { name: "build", arguments: { structure: "city", reason: "income" } },
+          { name: "build", arguments: { structure: "city" } },
+        ]);
+      },
+      { decisionLog: file },
+      { startingGold: 400_000_000 },
+    );
+    await g.until(() => g.recorded().some((i) => i.type === "build_unit"));
+
+    const first = prompt(callsOf(g.provider, US)[0]);
+    expect(first).toContain("OPTIONS NOW");
+    expect(first).toMatch(/Build now with the build tool.*city/);
+    expect(first).toContain(`you are ${US}`);
+
+    const builds = g.recorded().filter((i) => i.type === "build_unit");
+    expect(builds[0]).toMatchObject({ type: "build_unit", unit: "City" });
+    // Two cities in one decision never share a site.
+    const tiles = builds.map((b: any) => b.tile);
+    expect(new Set(tiles).size).toBe(tiles.length);
+    const us = readDecisionLog(file).find((r) => r.empire === US)!;
+    expect(us.actions.some((a) => a.reason === "income")).toBe(true);
+  });
+
+  it("refuses a build the nation cannot pay for, with the price", async () => {
+    const file = path.join(dir, "d.jsonl");
+    const g = await liveDuoGame(
+      (req) =>
+        who(req) === US
+          ? ok([
+              plan("grow", "x"),
+              { name: "build", arguments: { structure: "city" } },
+            ])
+          : ok([plan("wait", "w")]),
+      { decisionLog: file },
+      { startingGold: 1 },
+    );
+    await g.until(() => readDecisionLog(file).some((r) => r.empire === US));
+    const r = readDecisionLog(file).find((x) => x.empire === US)!;
+    expect(r.rejected[0]).toMatch(/costs \d+ gold, you have/);
+    expect(g.recorded().some((i) => i.type === "build_unit")).toBe(false);
+  });
+});
+
+describe("fallen players", () => {
+  it("shows the model who is out of the game and drops their treaties", async () => {
+    const g = await liveDuoGame((req) => ok([plan("wait", "w")]));
+    await g.until(() => callsOf(g.provider, US).length >= 1);
+    expect(prompt(callsOf(g.provider, US)[0])).not.toContain("ELIMINATED");
+    const brain = g.brain(US);
+    brain.eliminated = ["Ghostland"];
+    brain.tribesLost = 3;
+    const seen = callsOf(g.provider, US).length;
+    await g.until(() => callsOf(g.provider, US).length > seen);
+    const text = prompt(callsOf(g.provider, US)[seen]);
+    expect(text).toContain("ELIMINATED (no longer in the game):");
+    expect(text).toContain("Ghostland, 3 tribes");
+  });
+});
+
 describe("message flood", () => {
   it("lets a decision send two messages and rejects the rest", async () => {
     const file = path.join(dir, "d.jsonl");
